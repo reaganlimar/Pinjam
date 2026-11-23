@@ -25,8 +25,8 @@ export default async function BrowsePage({ searchParams }: PageProps<"/browse">)
     price: one(sp.price) === "free" ? "free" : one(sp.price) === "paid" ? "paid" : undefined,
     sort: SORT_OPTIONS.some((o) => o.value === one(sp.sort)) ? (one(sp.sort) as BrowseFilters["sort"]) : "newest",
   };
-  const categories = listCategories();
-  const items = browseItems(user.id, filters);
+  const categories = await listCategories();
+  const items = await browseItems(user.id, filters);
   const filtered = Boolean(filters.q || filters.category || filters.price);
 
   /** Builds a /browse URL that keeps the other filters. */
@@ -46,7 +46,7 @@ export default async function BrowsePage({ searchParams }: PageProps<"/browse">)
           <Logo className="text-[38px]" />
           <p className="text-[13px] text-muted">{CAMPUS_LABEL}</p>
         </div>
-        <IconLink href="/notifications" label="Notifications" count={unreadCount(user.id)}>
+        <IconLink href="/notifications" label="Notifications" count={await unreadCount(user.id)}>
           <Bell className="size-5" />
         </IconLink>
       </div>

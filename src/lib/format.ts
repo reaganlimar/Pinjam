@@ -38,8 +38,19 @@ export function addDays(dateOnly: string, days: number): string {
   return toDateOnly(d);
 }
 
+/**
+ * Campus time zone. Servers (e.g. Vercel) run in UTC, so "today", due dates and times
+ * are always computed in this zone rather than the machine's.
+ */
+export const TIME_ZONE = process.env.NEXT_PUBLIC_TIME_ZONE || "Asia/Jakarta";
+
+/** Calendar date ("YYYY-MM-DD") of an instant in the campus time zone. */
+export function dateKeyInZone(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
 export function todayDateOnly(): string {
-  return toDateOnly(new Date());
+  return dateKeyInZone(new Date());
 }
 
 /** "Thu 8 Oct" */
@@ -54,9 +65,13 @@ export function formatDay(dateOnly: string): string {
 /** "6 Oct 2026, 13:50" */
 export function formatDateTime(iso: string): string {
   const d = new Date(iso);
-  const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  return `${date}, ${time}`;
+  const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: TIME_ZONE });
+  return `${date}, ${formatTime(iso)}`;
+}
+
+/** "13:50" in the campus time zone. */
+export function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: TIME_ZONE });
 }
 
 /** "3h ago", "Today", "Yesterday", "28 Sept" style relative label for notifications. */
@@ -66,11 +81,11 @@ export function formatRelative(iso: string, now = new Date()): string {
   if (diffMin < 1) return "Just now";
   if (diffMin < 60) return `${diffMin}m ago`;
   const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24 && d.getDate() === now.getDate()) return `${diffH}h ago`;
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const day = dateKeyInZone(d);
+  const today = dateKeyInZone(now);
+  if (day === today) return `${diffH}h ago`;
+  if (day === addDays(today, -1)) return "Yesterday";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: TIME_ZONE });
 }
 
 export function pluralDays(n: number): string {

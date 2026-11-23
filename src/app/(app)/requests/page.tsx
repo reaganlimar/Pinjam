@@ -12,8 +12,8 @@ export const metadata: Metadata = { title: "Requests" };
 export default async function RequestsPage({ searchParams }: PageProps<"/requests">) {
   const user = await requireUser();
   const tab = (await searchParams).tab === "sent" ? "sent" : "received";
-  const received = receivedRequests(user.id);
-  const sent = sentRequests(user.id);
+  const received = await receivedRequests(user.id);
+  const sent = await sentRequests(user.id);
   const pendingCount = received.filter((l) => l.status === "pending").length;
 
   return (

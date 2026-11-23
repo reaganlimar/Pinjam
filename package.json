@@ -8,20 +8,28 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "node --env-file-if-exists=.env.local scripts/db-migrate.mjs",
+    "db:status": "node --env-file-if-exists=.env.local scripts/db-migrate.mjs --status",
+    "db:import-sqlite": "node --env-file-if-exists=.env.local scripts/import-sqlite.mjs",
+    "vercel-build": "node scripts/db-migrate.mjs && next build"
   },
   "dependencies": {
+    "@vercel/functions": "^3.11.3",
     "bcryptjs": "^3.0.3",
     "lucide-react": "^1.77.0",
     "next": "16.4.6",
+    "pg": "^8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "^0.0.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.17",
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

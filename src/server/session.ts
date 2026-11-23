@@ -24,7 +24,7 @@ export async function getSessionToken(): Promise<string | null> {
 }
 
 export async function startSession(userId: number) {
-  const { token, expiresAt } = createSession(userId);
+  const { token, expiresAt } = await createSession(userId);
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -37,6 +37,6 @@ export async function startSession(userId: number) {
 export async function endSession() {
   const store = await cookies();
   const token = store.get(COOKIE)?.value;
-  if (token) deleteSession(token);
+  if (token) await deleteSession(token);
   store.delete(COOKIE);
 }

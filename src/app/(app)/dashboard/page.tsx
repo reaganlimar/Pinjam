@@ -21,8 +21,8 @@ export const metadata: Metadata = { title: "Dashboard" };
  */
 export default async function DashboardPage() {
   const user = await requireUser();
-  const d = getDashboard(user.id);
-  const stats = getUserStats(user.id);
+  const d = await getDashboard(user.id);
+  const stats = await getUserStats(user.id);
 
   return (
     <div>

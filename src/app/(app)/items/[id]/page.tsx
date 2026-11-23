@@ -21,9 +21,9 @@ import { buttonClasses, LinkButton } from "@/components/ui/button";
 
 export const metadata: Metadata = { title: "Item" };
 
-function loadItem(id: number) {
+async function loadItem(id: number) {
   try {
-    return getItem(id);
+    return await getItem(id);
   } catch (err) {
     if (err instanceof AppError && err.code === "not_found") notFound();
     throw err;
@@ -35,9 +35,9 @@ export default async function ItemPage({ params, searchParams }: PageProps<"/ite
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
   const { saved } = await searchParams;
-  const item = loadItem(id);
+  const item = await loadItem(id);
   const isOwner = item.owner.id === user.id;
-  const openLoan = isOwner ? null : openLoanForItem(item.id, user.id);
+  const openLoan = isOwner ? null : await openLoanForItem(item.id, user.id);
   const a = AVAILABILITY[item.availability];
   const [cover, ...more] = item.images;
 
@@ -156,7 +156,7 @@ export default async function ItemPage({ params, searchParams }: PageProps<"/ite
               )}
 
               <div className="pt-2 text-center">
-                {hasReported(user.id, item.id) ? (
+                {(await hasReported(user.id, item.id)) ? (
                   <p className="text-[13px] text-muted">You reported this listing.</p>
                 ) : (
                   <Link

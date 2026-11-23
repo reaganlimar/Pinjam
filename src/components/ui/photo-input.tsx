@@ -3,13 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { compressImage } from "@/lib/compress-image";
 
 const ACCEPT = "image/jpeg,image/png,image/webp";
-const MAX_BYTES = 5 * 1024 * 1024;
+/** Matches the server limit (src/server/storage.ts), checked after compression. */
+const MAX_BYTES = 2 * 1024 * 1024;
+/** Keeps one form submission under the 4 MB server action limit (Vercel caps bodies at 4.5 MB). */
+const MAX_TOTAL_BYTES = 3.5 * 1024 * 1024;
 
 /**
  * Dashed photo drop area from the Figma ("Add student ID photo" / "Add a photo").
- * Keeps the chosen files in a real <input type="file"> so they submit with the form.
+ * Photos are downscaled in the browser, then kept in a real <input type="file"> so
+ * they submit with the form.
  */
 export function PhotoInput({
   name,
@@ -29,6 +34,7 @@ export function PhotoInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const [previews, setPreviews] = useState<{ url: string; name: string }[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [processing, setProcessing] = useState(false);
 
   useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p.url)), [previews]);
 
@@ -50,22 +56,30 @@ export function PhotoInput({
     setPreviews(files.map((f) => ({ url: URL.createObjectURL(f), name: f.name })));
   }
 
-  function onChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const chosen = Array.from(e.target.files ?? []);
-    const tooBig = chosen.find((f) => f.size > MAX_BYTES);
-    const wrongType = chosen.find((f) => !ACCEPT.split(",").includes(f.type));
-    if (tooBig || wrongType) {
-      setLocalError(tooBig ? "Each photo must be 5 MB or smaller." : "Use JPG, PNG or WebP photos.");
+  async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
+    let chosen = Array.from(e.target.files ?? []);
+    if (chosen.find((f) => !ACCEPT.split(",").includes(f.type))) {
+      setLocalError("Use JPG, PNG or WebP photos.");
       sync([]);
       return;
     }
-    if (chosen.length > maxFiles) {
-      setLocalError(`Choose up to ${maxFiles} photo${maxFiles === 1 ? "" : "s"}.`);
-      sync(chosen.slice(0, maxFiles));
+    const tooMany = chosen.length > maxFiles;
+    chosen = chosen.slice(0, maxFiles);
+    setProcessing(true);
+    const compressed = await Promise.all(chosen.map((f) => compressImage(f)));
+    setProcessing(false);
+    if (compressed.find((f) => f.size > MAX_BYTES)) {
+      setLocalError("Each photo must be 2 MB or smaller. Try a smaller photo.");
+      sync([]);
       return;
     }
-    setLocalError(null);
-    sync(chosen);
+    if (compressed.reduce((sum, f) => sum + f.size, 0) > MAX_TOTAL_BYTES) {
+      setLocalError("These photos are too large together. Choose fewer or smaller photos.");
+      sync([]);
+      return;
+    }
+    setLocalError(tooMany ? `Choose up to ${maxFiles} photo${maxFiles === 1 ? "" : "s"}.` : null);
+    sync(compressed);
   }
 
   function remove(index: number) {
@@ -86,7 +100,9 @@ export function PhotoInput({
         )}
       >
         <Camera className="size-7" strokeWidth={1.6} aria-hidden />
-        <span>{previews.length ? (multiple ? "Add or change photos" : "Change photo") : label}</span>
+        <span aria-live="polite">
+          {processing ? "Preparing photo…" : previews.length ? (multiple ? "Add or change photos" : "Change photo") : label}
+        </span>
         <input
           ref={inputRef}
           type="file"

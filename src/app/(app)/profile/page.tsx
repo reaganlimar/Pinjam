@@ -29,13 +29,13 @@ const MENU = [
 export default async function ProfilePage({ searchParams }: PageProps<"/profile">) {
   const user = await requireUser();
   const { saved } = await searchParams;
-  const stats = getUserStats(user.id);
+  const stats = await getUserStats(user.id);
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Profile"
         action={
-          <IconLink href="/chat" label="Chat" count={unreadMessageCount(user.id)}>
+          <IconLink href="/chat" label="Chat" count={await unreadMessageCount(user.id)}>
             <MessageSquare className="size-5" />
           </IconLink>
         }

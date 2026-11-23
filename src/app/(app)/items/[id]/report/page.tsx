@@ -14,7 +14,7 @@ export default async function ReportPage({ params }: PageProps<"/items/[id]/repo
   const id = Number((await params).id);
   let item;
   try {
-    item = getItem(id);
+    item = await getItem(id);
   } catch (err) {
     if (err instanceof AppError) notFound();
     throw err;

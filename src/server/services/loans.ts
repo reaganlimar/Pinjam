@@ -1,8 +1,9 @@
 import "server-only";
-import { getDb, nowIso, transaction, type Db, type Row } from "../db";
+import { getDb, join, PG, pgCode, pgConstraint, raw, sql, transaction, type Database, type Row } from "../db";
 import { AppError, forbidden, notFound } from "../errors";
 import { loanRequestSchema, parse } from "../validation";
 import { notify } from "./notifications";
+import { lockItem } from "./items";
 import { addDays, formatDay, todayDateOnly } from "@/lib/format";
 import {
   availableActions,
@@ -51,7 +52,7 @@ export type LoanEvent = {
   createdAt: string;
 };
 
-const LOAN_SELECT = `
+const LOAN_SELECT = sql`
   SELECT l.*, i.name AS item_name, i.pickup_point, i.deleted_at AS item_deleted,
          (SELECT file_key FROM item_images im WHERE im.item_id = i.id ORDER BY position, id LIMIT 1) AS image_key,
          b.full_name AS borrower_name, b.avatar_key AS borrower_avatar,
@@ -93,120 +94,96 @@ function toLoan(r: Row): LoanView {
   };
 }
 
-const RESERVING_SQL = RESERVING_STATUSES.map((s) => `'${s}'`).join(",");
+const RESERVING_SQL = raw(RESERVING_STATUSES.map((s) => `'${s}'`).join(","));
 
 /**
- * Loans that reserve `itemId` and overlap [start, end). Ranges are treated as half-open
- * so one student can return on the morning another picks up. Items that are still out
+ * Loans that reserve `itemId` and overlap [start, end). Ranges are half-open so one
+ * student can return on the morning another picks up. Items that are still out
  * (borrowed / return pending) are treated as reserved at least until today.
+ * (The loans_no_overlap constraint enforces the date-range part in the database too.)
  */
-function findOverlapping(db: Db, itemId: number, start: string, end: string, excludeLoanId = 0): Row[] {
+async function findOverlapping(db: Database, itemId: number, start: string, end: string, excludeLoanId = 0) {
   const today = todayDateOnly();
-  return db
-    .prepare(
-      `SELECT id, start_date, end_date, status FROM loans
-       WHERE item_id = ? AND id <> ? AND status IN (${RESERVING_SQL})
-         AND start_date < ?
-         AND (CASE WHEN status IN ('borrowed','return_pending') AND end_date < ? THEN ? ELSE end_date END) > ?`,
-    )
-    .all(itemId, excludeLoanId, end, today, addDays(today, 1), start) as Row[];
+  return db.many<{ id: number; start_date: string; end_date: string }>(sql`
+    SELECT id, start_date, end_date FROM loans
+    WHERE item_id = ${itemId} AND id <> ${excludeLoanId} AND status IN (${RESERVING_SQL})
+      AND start_date < ${end}::date
+      AND (CASE WHEN status IN ('borrowed', 'return_pending') AND end_date < ${today}::date
+                THEN ${addDays(today, 1)}::date ELSE end_date END) > ${start}::date`);
 }
 
-function logEvent(db: Db, loanId: number, actorId: number | null, from: LoanStatus | null, to: LoanStatus, note?: string) {
-  db.prepare(
-    "INSERT INTO loan_events (loan_id, actor_id, from_status, to_status, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(loanId, actorId, from, to, note ?? null, nowIso());
+async function logEvent(db: Database, loanId: number, actorId: number | null, from: LoanStatus | null, to: LoanStatus, note?: string) {
+  await db.run(sql`
+    INSERT INTO loan_events (loan_id, actor_id, from_status, to_status, note)
+    VALUES (${loanId}, ${actorId}, ${from}, ${to}, ${note ?? null})`);
+}
+
+function invalid(field: string, message: string) {
+  return new AppError("Please check the highlighted fields.", "invalid", { [field]: message });
 }
 
 // ---------------------------------------------------------------- creating a request
 
-export function requestLoan(borrowerId: number, input: unknown): number {
+export async function requestLoan(borrowerId: number, input: unknown): Promise<number> {
   const data = parse(loanRequestSchema, input);
-  return transaction((db) => {
-    const item = db
-      .prepare("SELECT * FROM items WHERE id = ? AND deleted_at IS NULL")
-      .get(data.itemId) as Row | undefined;
-    if (!item) throw notFound("That item");
-    if (Number(item.owner_id) === borrowerId) throw forbidden("You can't borrow your own item.");
-    if (Number(item.is_available) !== 1) throw new AppError("This item isn't available to borrow right now.", "conflict");
+  try {
+    return await transaction(async (db) => {
+      // Lock the item so concurrent requests/approvals for it run one at a time.
+      const item = await lockItem(db, data.itemId);
+      if (Number(item.owner_id) === borrowerId) throw forbidden("You can't borrow your own item.");
+      if (item.is_available !== true) throw new AppError("This item isn't available to borrow right now.", "conflict");
 
-    const today = todayDateOnly();
-    if (data.startDate < today) {
-      throw new AppError("Please check the highlighted fields.", "invalid", { startDate: "Pick a date from today onwards." });
-    }
-    if (data.startDate > addDays(today, MAX_DAYS_AHEAD)) {
-      throw new AppError("Please check the highlighted fields.", "invalid", {
-        startDate: `You can book up to ${MAX_DAYS_AHEAD} days ahead.`,
-      });
-    }
-    const maxDays = Number(item.max_days);
-    if (data.days > maxDays) {
-      throw new AppError("Please check the highlighted fields.", "invalid", {
-        days: `The lender allows at most ${maxDays} day${maxDays === 1 ? "" : "s"}.`,
-      });
-    }
+      const today = todayDateOnly();
+      if (data.startDate < today) throw invalid("startDate", "Pick a date from today onwards.");
+      if (data.startDate > addDays(today, MAX_DAYS_AHEAD)) {
+        throw invalid("startDate", `You can book up to ${MAX_DAYS_AHEAD} days ahead.`);
+      }
+      const maxDays = Number(item.max_days);
+      if (data.days > maxDays) throw invalid("days", `The lender allows at most ${maxDays} day${maxDays === 1 ? "" : "s"}.`);
 
-    const duplicate = db
-      .prepare(
-        `SELECT id FROM loans WHERE item_id = ? AND borrower_id = ? AND status IN ('pending', ${RESERVING_SQL})`,
-      )
-      .get(data.itemId, borrowerId) as Row | undefined;
-    if (duplicate) {
+      const duplicate = await db.maybe(sql`
+        SELECT id FROM loans WHERE item_id = ${data.itemId} AND borrower_id = ${borrowerId}
+          AND status IN ('pending', ${RESERVING_SQL})`);
+      if (duplicate) throw new AppError("You already have an open request for this item.", "conflict");
+
+      const endDate = addDays(data.startDate, data.days);
+      const clash = await findOverlapping(db, data.itemId, data.startDate, endDate);
+      if (clash.length) {
+        throw new AppError(
+          `This item is already booked from ${formatDay(clash[0].start_date)} to ${formatDay(clash[0].end_date)}. Try other dates.`,
+          "conflict",
+        );
+      }
+
+      const pricePerDay = Number(item.price_per_day);
+      const feeTotal = pricePerDay * data.days;
+      let paymentMethod = data.paymentMethod;
+      if (feeTotal === 0) paymentMethod = "none";
+      else if (paymentMethod === "none") throw invalid("paymentMethod", "Choose how you'll pay the lender.");
+
+      const { id } = await db.one<{ id: number }>(sql`
+        INSERT INTO loans (item_id, borrower_id, lender_id, start_date, end_date, days, price_per_day, fee_total,
+                           payment_method, note, status)
+        VALUES (${data.itemId}, ${borrowerId}, ${Number(item.owner_id)}, ${data.startDate}, ${endDate}, ${data.days},
+                ${pricePerDay}, ${feeTotal}, ${paymentMethod}, ${data.note}, 'pending')
+        RETURNING id`);
+      await logEvent(db, id, borrowerId, null, "pending");
+
+      const borrower = await db.one<{ full_name: string }>(sql`SELECT full_name FROM users WHERE id = ${borrowerId}`);
+      await notify(db, Number(item.owner_id), {
+        type: "loan_requested",
+        title: `${borrower.full_name} requested your ${item.name}`,
+        body: "Approve or decline",
+        link: "/requests",
+      });
+      return Number(id);
+    });
+  } catch (err) {
+    if (pgCode(err) === PG.uniqueViolation && pgConstraint(err) === "loans_one_open_per_borrower") {
       throw new AppError("You already have an open request for this item.", "conflict");
     }
-
-    const endDate = addDays(data.startDate, data.days);
-    const clash = findOverlapping(db, data.itemId, data.startDate, endDate);
-    if (clash.length) {
-      const c = clash[0];
-      throw new AppError(
-        `This item is already booked from ${formatDay(String(c.start_date))} to ${formatDay(String(c.end_date))}. Try other dates.`,
-        "conflict",
-      );
-    }
-
-    const pricePerDay = Number(item.price_per_day);
-    const feeTotal = pricePerDay * data.days;
-    let paymentMethod = data.paymentMethod;
-    if (feeTotal === 0) paymentMethod = "none";
-    else if (paymentMethod === "none") {
-      throw new AppError("Please check the highlighted fields.", "invalid", {
-        paymentMethod: "Choose how you'll pay the lender.",
-      });
-    }
-
-    const now = nowIso();
-    const { id } = db
-      .prepare(
-        `INSERT INTO loans (item_id, borrower_id, lender_id, start_date, end_date, days, price_per_day, fee_total,
-                            payment_method, note, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) RETURNING id`,
-      )
-      .get(
-        data.itemId,
-        borrowerId,
-        Number(item.owner_id),
-        data.startDate,
-        endDate,
-        data.days,
-        pricePerDay,
-        feeTotal,
-        paymentMethod,
-        data.note,
-        now,
-        now,
-      ) as { id: number };
-    logEvent(db, Number(id), borrowerId, null, "pending");
-
-    const borrower = db.prepare("SELECT full_name FROM users WHERE id = ?").get(borrowerId) as Row;
-    notify(db, Number(item.owner_id), {
-      type: "loan_requested",
-      title: `${borrower.full_name} requested your ${item.name}`,
-      body: "Approve or decline",
-      link: `/requests`,
-    });
-    return Number(id);
-  });
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------- status transitions
@@ -217,239 +194,247 @@ function roleOf(loan: Row, userId: number): LoanRole | null {
   return null;
 }
 
-export function transitionLoan(
+const STAMP: Partial<Record<LoanStatus, string>> = {
+  approved: "approved_at",
+  borrowed: "picked_up_at",
+  return_pending: "returned_at",
+  completed: "completed_at",
+};
+
+export async function transitionLoan(
   loanId: number,
   actorId: number,
   action: LoanAction,
   opts: { returnCondition?: ReturnCondition; note?: string } = {},
-): LoanStatus {
-  return transaction((db) => {
-    const loan = db
-      .prepare("SELECT l.*, i.name AS item_name, i.pickup_point, i.deleted_at AS item_deleted FROM loans l JOIN items i ON i.id = l.item_id WHERE l.id = ?")
-      .get(loanId) as Row | undefined;
-    if (!loan) throw notFound("That request");
-    const role = roleOf(loan, actorId);
-    if (!role) throw forbidden();
-    const from = loan.status as LoanStatus;
-    const to = nextStatus(action, from, role);
-    if (!to) {
-      throw new AppError("This request has changed since you opened it. Refresh to see its current status.", "conflict");
+): Promise<LoanStatus> {
+  try {
+    return await transaction((db) => runTransition(db, loanId, actorId, action, opts));
+  } catch (err) {
+    if (pgCode(err) === PG.exclusionViolation) {
+      throw new AppError("You've already approved another request for these dates.", "conflict");
     }
+    throw err;
+  }
+}
 
-    const now = nowIso();
-    const itemName = String(loan.item_name);
-    const borrowerId = Number(loan.borrower_id);
-    const lenderId = Number(loan.lender_id);
-    const actor = db.prepare("SELECT full_name FROM users WHERE id = ?").get(actorId) as Row;
-    const actorName = String(actor.full_name);
-    const link = `/loans/${loanId}`;
+async function runTransition(
+  db: Database,
+  loanId: number,
+  actorId: number,
+  action: LoanAction,
+  opts: { returnCondition?: ReturnCondition; note?: string },
+): Promise<LoanStatus> {
+  const head = await db.maybe<{ item_id: number }>(sql`SELECT item_id FROM loans WHERE id = ${loanId}`);
+  if (!head) throw notFound("That request");
+  // Lock the item first (same order as requestLoan) so approvals can't race.
+  await db.run(sql`SELECT id FROM items WHERE id = ${head.item_id} FOR UPDATE`);
+  const loan = await db.one(sql`
+    SELECT l.*, i.name AS item_name, i.pickup_point, i.deleted_at AS item_deleted
+    FROM loans l JOIN items i ON i.id = l.item_id WHERE l.id = ${loanId} FOR UPDATE OF l`);
 
-    if (action === "approve") {
-      if (loan.item_deleted !== null) throw new AppError("This listing was removed.", "conflict");
-      const clash = findOverlapping(db, Number(loan.item_id), String(loan.start_date), String(loan.end_date), loanId);
-      if (clash.length) {
-        throw new AppError("You've already approved another request for these dates.", "conflict");
-      }
-    }
+  const role = roleOf(loan, actorId);
+  if (!role) throw forbidden();
+  const from = loan.status as LoanStatus;
+  const to = nextStatus(action, from, role);
+  if (!to) throw new AppError("This request has changed since you opened it. Refresh to see its current status.", "conflict");
 
-    const stamp: Partial<Record<LoanStatus, string>> = {
-      approved: "approved_at",
-      borrowed: "picked_up_at",
-      return_pending: "returned_at",
-      completed: "completed_at",
-    };
-    const sets = ["status = :to", "updated_at = :now"];
-    const params: Record<string, string | number | null> = { to, now, id: loanId };
-    if (stamp[to]) sets.push(`${stamp[to]} = :now`);
-    if (action === "confirm_return") {
-      // If the lender confirms without the borrower tapping Return, record the return time now.
-      if (from === "borrowed") sets.push("returned_at = :now");
-      sets.push("return_condition = :cond");
-      params.cond = opts.returnCondition ?? "same";
-    }
-    db.prepare(`UPDATE loans SET ${sets.join(", ")} WHERE id = :id`).run(params);
-    logEvent(db, loanId, actorId, from, to, opts.note);
+  const itemName = String(loan.item_name);
+  const borrowerId = Number(loan.borrower_id);
+  const lenderId = Number(loan.lender_id);
+  const actor = await db.one<{ full_name: string }>(sql`SELECT full_name FROM users WHERE id = ${actorId}`);
+  const link = `/loans/${loanId}`;
 
-    switch (action) {
-      case "approve": {
-        notify(db, borrowerId, {
-          type: "loan_approved",
-          title: `Your request for ${itemName} was approved`,
-          body: "The lender will let you know when it's ready for pickup.",
-          link,
-        });
-        // Decline other pending requests that now clash with this approved loan.
-        const others = db
-          .prepare(
-            `SELECT id, borrower_id FROM loans WHERE item_id = ? AND id <> ? AND status = 'pending'
-             AND start_date < ? AND end_date > ?`,
-          )
-          .all(Number(loan.item_id), loanId, String(loan.end_date), String(loan.start_date)) as Row[];
-        for (const o of others) {
-          db.prepare("UPDATE loans SET status = 'rejected', updated_at = ? WHERE id = ?").run(now, Number(o.id));
-          logEvent(db, Number(o.id), actorId, "pending", "rejected", "Dates taken by another approved request");
-          notify(db, Number(o.borrower_id), {
-            type: "loan_rejected",
-            title: `Your request for ${itemName} was declined`,
-            body: "Those dates were given to another student. Try different dates.",
-            link: `/loans/${o.id}`,
-          });
-        }
-        break;
-      }
-      case "reject":
-        notify(db, borrowerId, {
+  if (action === "approve") {
+    if (loan.item_deleted !== null) throw new AppError("This listing was removed.", "conflict");
+    const clash = await findOverlapping(db, Number(loan.item_id), String(loan.start_date), String(loan.end_date), loanId);
+    if (clash.length) throw new AppError("You've already approved another request for these dates.", "conflict");
+  }
+
+  const sets = [sql`status = ${to}`, sql`updated_at = now()`];
+  if (STAMP[to]) sets.push(sql`${raw(STAMP[to]!)} = now()`);
+  if (action === "confirm_return") {
+    // If the lender confirms without the borrower tapping Return, record the return time now.
+    if (from === "borrowed") sets.push(sql`returned_at = now()`);
+    sets.push(sql`return_condition = ${opts.returnCondition ?? "same"}`);
+  }
+  await db.run(sql`UPDATE loans SET ${join(sets, ", ")} WHERE id = ${loanId}`);
+  await logEvent(db, loanId, actorId, from, to, opts.note);
+
+  switch (action) {
+    case "approve": {
+      await notify(db, borrowerId, {
+        type: "loan_approved",
+        title: `Your request for ${itemName} was approved`,
+        body: "The lender will let you know when it's ready for pickup.",
+        link,
+      });
+      // Decline other pending requests that now clash with this approved loan.
+      const others = await db.many<{ id: number; borrower_id: number }>(sql`
+        UPDATE loans SET status = 'rejected', updated_at = now()
+        WHERE item_id = ${Number(loan.item_id)} AND id <> ${loanId} AND status = 'pending'
+          AND start_date < ${String(loan.end_date)}::date AND end_date > ${String(loan.start_date)}::date
+        RETURNING id, borrower_id`);
+      for (const o of others) {
+        await logEvent(db, o.id, actorId, "pending", "rejected", "Dates taken by another approved request");
+        await notify(db, Number(o.borrower_id), {
           type: "loan_rejected",
           title: `Your request for ${itemName} was declined`,
-          body: "You can look for a similar item or try other dates.",
-          link,
+          body: "Those dates were given to another student. Try different dates.",
+          link: `/loans/${o.id}`,
         });
-        break;
-      case "cancel":
-        notify(db, role === "borrower" ? lenderId : borrowerId, {
-          type: "loan_cancelled",
-          title: `${actorName} cancelled the request for ${itemName}`,
-          link,
-        });
-        break;
-      case "mark_ready":
-        notify(db, borrowerId, {
-          type: "loan_ready",
-          title: `${itemName} is ready for pickup`,
-          body: `Pick it up at ${loan.pickup_point} on ${formatDay(String(loan.start_date))}.`,
-          link,
-        });
-        break;
-      case "confirm_pickup":
-        notify(db, lenderId, {
-          type: "loan_picked_up",
-          title: `${actorName} picked up your ${itemName}`,
-          body: `Due back ${formatDay(String(loan.end_date))}.`,
-          link,
-        });
-        break;
-      case "mark_returned":
-        notify(db, lenderId, {
-          type: "loan_return_marked",
-          title: `${actorName} returned your ${itemName}`,
-          body: "Confirm you have it back.",
-          link,
-        });
-        break;
-      case "confirm_return": {
-        const onTime = todayDateOnly() <= String(loan.end_date);
-        notify(db, borrowerId, {
-          type: "loan_completed",
-          title: `${itemName} returned. Thank you!`,
-          body: onTime ? "Returned on time. Rate the lender to finish." : "Transaction completed. Rate the lender to finish.",
-          link,
-        });
-        break;
       }
+      break;
     }
-    return to;
-  });
+    case "reject":
+      await notify(db, borrowerId, {
+        type: "loan_rejected",
+        title: `Your request for ${itemName} was declined`,
+        body: "You can look for a similar item or try other dates.",
+        link,
+      });
+      break;
+    case "cancel":
+      await notify(db, role === "borrower" ? lenderId : borrowerId, {
+        type: "loan_cancelled",
+        title: `${actor.full_name} cancelled the request for ${itemName}`,
+        link,
+      });
+      break;
+    case "mark_ready":
+      await notify(db, borrowerId, {
+        type: "loan_ready",
+        title: `${itemName} is ready for pickup`,
+        body: `Pick it up at ${loan.pickup_point} on ${formatDay(String(loan.start_date))}.`,
+        link,
+      });
+      break;
+    case "confirm_pickup":
+      await notify(db, lenderId, {
+        type: "loan_picked_up",
+        title: `${actor.full_name} picked up your ${itemName}`,
+        body: `Due back ${formatDay(String(loan.end_date))}.`,
+        link,
+      });
+      break;
+    case "mark_returned":
+      await notify(db, lenderId, {
+        type: "loan_return_marked",
+        title: `${actor.full_name} returned your ${itemName}`,
+        body: "Confirm you have it back.",
+        link,
+      });
+      break;
+    case "confirm_return": {
+      const onTime = todayDateOnly() <= String(loan.end_date);
+      await notify(db, borrowerId, {
+        type: "loan_completed",
+        title: `${itemName} returned. Thank you!`,
+        body: onTime ? "Returned on time. Rate the lender to finish." : "Transaction completed. Rate the lender to finish.",
+        link,
+      });
+      break;
+    }
+  }
+  return to;
 }
 
 /** Lender records that the agreed fee was paid (no money moves through Pinjam). */
-export function markFeeReceived(loanId: number, lenderId: number) {
+export async function markFeeReceived(loanId: number, lenderId: number) {
   const db = getDb();
-  const loan = db.prepare("SELECT * FROM loans WHERE id = ?").get(loanId) as Row | undefined;
+  const loan = await db.maybe(sql`SELECT * FROM loans WHERE id = ${loanId}`);
   if (!loan) throw notFound("That loan");
   if (Number(loan.lender_id) !== lenderId) throw forbidden();
   if (Number(loan.fee_total) === 0) throw new AppError("This loan is free.", "invalid");
   if (!["ready_for_pickup", "borrowed", "return_pending", "completed"].includes(String(loan.status))) {
     throw new AppError("You can record payment once the item is ready for pickup.", "conflict");
   }
-  db.prepare("UPDATE loans SET fee_received_at = COALESCE(fee_received_at, ?), updated_at = ? WHERE id = ?").run(
-    nowIso(),
-    nowIso(),
-    loanId,
+  await db.run(
+    sql`UPDATE loans SET fee_received_at = COALESCE(fee_received_at, now()), updated_at = now() WHERE id = ${loanId}`,
   );
 }
 
 // ---------------------------------------------------------------- queries
 
-export function getLoanForUser(loanId: number, userId: number): { loan: LoanView; role: LoanRole; events: LoanEvent[] } {
+export async function getLoanForUser(
+  loanId: number,
+  userId: number,
+): Promise<{ loan: LoanView; role: LoanRole; events: LoanEvent[] }> {
   const db = getDb();
-  const row = db.prepare(`${LOAN_SELECT} WHERE l.id = ?`).get(loanId) as Row | undefined;
+  const row = await db.maybe(sql`${LOAN_SELECT} WHERE l.id = ${loanId}`);
   if (!row) throw notFound("That loan");
   const role = roleOf(row, userId);
   if (!role) throw notFound("That loan");
-  const events = (
-    db
-      .prepare(
-        `SELECT e.*, u.full_name AS actor_name FROM loan_events e LEFT JOIN users u ON u.id = e.actor_id
-         WHERE e.loan_id = ? ORDER BY e.id`,
-      )
-      .all(loanId) as Row[]
-  ).map((e) => ({
-    id: Number(e.id),
-    actorName: (e.actor_name as string) ?? null,
-    fromStatus: (e.from_status as LoanStatus) ?? null,
-    toStatus: e.to_status as LoanStatus,
-    note: (e.note as string) ?? null,
-    createdAt: String(e.created_at),
-  }));
-  return { loan: toLoan(row), role, events };
+  const events = await db.many(sql`
+    SELECT e.*, u.full_name AS actor_name FROM loan_events e LEFT JOIN users u ON u.id = e.actor_id
+    WHERE e.loan_id = ${loanId} ORDER BY e.id`);
+  return {
+    loan: toLoan(row),
+    role,
+    events: events.map((e) => ({
+      id: Number(e.id),
+      actorName: (e.actor_name as string) ?? null,
+      fromStatus: (e.from_status as LoanStatus) ?? null,
+      toStatus: e.to_status as LoanStatus,
+      note: (e.note as string) ?? null,
+      createdAt: String(e.created_at),
+    })),
+  };
 }
 
-function list(where: string, ...args: (string | number)[]): LoanView[] {
-  return (getDb().prepare(`${LOAN_SELECT} WHERE ${where}`).all(...args) as Row[]).map(toLoan);
+async function list(where: ReturnType<typeof sql>): Promise<LoanView[]> {
+  return (await getDb().many(sql`${LOAN_SELECT} WHERE ${where}`)).map(toLoan);
 }
 
 /** The viewer's unfinished request/loan for an item, if any. */
-export function openLoanForItem(itemId: number, borrowerId: number): LoanView | null {
-  return (
-    list(
-      `l.item_id = ? AND l.borrower_id = ? AND l.status IN ('pending', ${RESERVING_SQL}) ORDER BY l.id DESC LIMIT 1`,
-      itemId,
-      borrowerId,
-    )[0] ?? null
-  );
+export async function openLoanForItem(itemId: number, borrowerId: number): Promise<LoanView | null> {
+  const rows = await list(sql`
+    l.item_id = ${itemId} AND l.borrower_id = ${borrowerId} AND l.status IN ('pending', ${RESERVING_SQL})
+    ORDER BY l.id DESC LIMIT 1`);
+  return rows[0] ?? null;
 }
 
-export function pendingRequestCount(lenderId: number): number {
-  const r = getDb().prepare("SELECT COUNT(*) n FROM loans WHERE lender_id = ? AND status = 'pending'").get(lenderId) as Row;
+export async function pendingRequestCount(lenderId: number): Promise<number> {
+  const r = await getDb().one<{ n: number }>(
+    sql`SELECT count(*) AS n FROM loans WHERE lender_id = ${lenderId} AND status = 'pending'`,
+  );
   return Number(r.n);
 }
 
 /** Requests the lender needs to see: pending first, then approved / in-progress ones. */
-export function receivedRequests(lenderId: number): LoanView[] {
-  return list(
-    `l.lender_id = ? AND l.status IN ('pending', ${RESERVING_SQL})
-     ORDER BY CASE l.status WHEN 'pending' THEN 0 WHEN 'return_pending' THEN 1 WHEN 'approved' THEN 2 ELSE 3 END, l.start_date`,
-    lenderId,
-  );
+export function receivedRequests(lenderId: number): Promise<LoanView[]> {
+  return list(sql`
+    l.lender_id = ${lenderId} AND l.status IN ('pending', ${RESERVING_SQL})
+    ORDER BY CASE l.status WHEN 'pending' THEN 0 WHEN 'return_pending' THEN 1 WHEN 'approved' THEN 2 ELSE 3 END,
+             l.start_date`);
 }
 
-/** Everything the student has asked to borrow that hasn't finished yet, plus recent outcomes. */
-export function sentRequests(borrowerId: number): LoanView[] {
-  return list(
-    `l.borrower_id = ? AND (l.status = 'pending' OR l.status = 'approved' OR l.status = 'ready_for_pickup'
-       OR (l.status IN ('rejected','cancelled') AND l.updated_at >= ?))
-     ORDER BY l.created_at DESC`,
-    borrowerId,
-    new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
-  );
+/** Everything the student has asked to borrow that hasn't started yet, plus recent outcomes. */
+export function sentRequests(borrowerId: number): Promise<LoanView[]> {
+  return list(sql`
+    l.borrower_id = ${borrowerId} AND (l.status IN ('pending', 'approved', 'ready_for_pickup')
+      OR (l.status IN ('rejected', 'cancelled') AND l.updated_at >= now() - interval '14 days'))
+    ORDER BY l.created_at DESC`);
 }
 
 /** Borrower's loans that are approved or in progress (My Loans → Active). */
-export function activeBorrows(borrowerId: number): LoanView[] {
-  return list(`l.borrower_id = ? AND l.status IN (${RESERVING_SQL}) ORDER BY l.end_date`, borrowerId);
+export function activeBorrows(borrowerId: number): Promise<LoanView[]> {
+  return list(sql`l.borrower_id = ${borrowerId} AND l.status IN (${RESERVING_SQL}) ORDER BY l.end_date`);
 }
 
 /** Lender's items currently out or being handed over. */
-export function activeLends(lenderId: number): LoanView[] {
-  return list(`l.lender_id = ? AND l.status IN (${RESERVING_SQL}) ORDER BY l.end_date`, lenderId);
+export function activeLends(lenderId: number): Promise<LoanView[]> {
+  return list(sql`l.lender_id = ${lenderId} AND l.status IN (${RESERVING_SQL}) ORDER BY l.end_date`);
 }
 
 /** Closed loans on either side (My Loans → History, profile history). */
-export function loanHistory(userId: number, side: "borrower" | "lender" | "both" = "both"): LoanView[] {
+export function loanHistory(userId: number, side: "borrower" | "lender" | "both" = "both"): Promise<LoanView[]> {
   const who =
-    side === "borrower" ? "l.borrower_id = ?" : side === "lender" ? "l.lender_id = ?" : "(l.borrower_id = ? OR l.lender_id = ?)";
-  const args = side === "both" ? [userId, userId] : [userId];
-  return list(`${who} AND l.status IN ('completed','rejected','cancelled') ORDER BY l.updated_at DESC LIMIT 100`, ...args);
+    side === "borrower"
+      ? sql`l.borrower_id = ${userId}`
+      : side === "lender"
+        ? sql`l.lender_id = ${userId}`
+        : sql`(l.borrower_id = ${userId} OR l.lender_id = ${userId})`;
+  return list(sql`${who} AND l.status IN ('completed', 'rejected', 'cancelled') ORDER BY l.updated_at DESC LIMIT 100`);
 }
 
 export { availableActions };

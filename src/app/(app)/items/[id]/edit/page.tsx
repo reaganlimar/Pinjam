@@ -14,7 +14,7 @@ export default async function EditItemPage({ params }: PageProps<"/items/[id]/ed
   const id = Number((await params).id);
   let item;
   try {
-    item = getItem(id);
+    item = await getItem(id);
   } catch (err) {
     if (err instanceof AppError) notFound();
     throw err;
@@ -25,7 +25,7 @@ export default async function EditItemPage({ params }: PageProps<"/items/[id]/ed
       <PageHeader backHref={`/items/${id}`} title="Edit listing" />
       <ItemForm
         action={updateItemAction.bind(null, id)}
-        categories={listCategories()}
+        categories={await listCategories()}
         submitLabel="Save changes"
         initial={{
           name: item.name,

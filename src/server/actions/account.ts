@@ -4,9 +4,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getSessionToken, requireUser } from "../session";
 import { changePassword, setStudentIdCard, updatePreferences, updateProfile } from "../services/users";
-import { listNotifications, markAllRead, markRead } from "../services/notifications";
+import { getNotification, markAllRead, markRead } from "../services/notifications";
 import { sendMessage } from "../services/chat";
-import { deleteImage, hasFile, saveImage } from "../storage";
+import { deleteImages, hasFile, saveImage } from "../storage";
 import { parse, profileSchema } from "../validation";
 import { toFormState, type FormState } from "./result";
 
@@ -17,17 +17,17 @@ export async function updateProfileAction(_prev: FormState, form: FormData): Pro
   try {
     parse(profileSchema, input);
     const avatar = form.get("avatar");
-    const avatarKey = hasFile(avatar) ? await saveImage(avatar, "avatar") : null;
+    const avatarKey = hasFile(avatar) ? await saveImage(avatar, "avatar", user.id) : null;
     if (avatarKey) saved.push(avatarKey);
     const card = form.get("studentIdCard");
-    const cardKey = hasFile(card) ? await saveImage(card, "idcard") : null;
+    const cardKey = hasFile(card) ? await saveImage(card, "idcard", user.id) : null;
     if (cardKey) saved.push(cardKey);
 
-    const { replacedAvatarKey } = updateProfile(user.id, input, avatarKey);
-    await deleteImage(replacedAvatarKey);
-    if (cardKey) await deleteImage(setStudentIdCard(user.id, cardKey));
+    const { replacedAvatarKey } = await updateProfile(user.id, input, avatarKey);
+    const replacedCardKey = cardKey ? await setStudentIdCard(user.id, cardKey) : null;
+    await deleteImages([replacedAvatarKey, replacedCardKey]);
   } catch (err) {
-    await Promise.all(saved.map(deleteImage));
+    await deleteImages(saved);
     return toFormState(err, form);
   }
   revalidatePath("/", "layout");
@@ -54,34 +54,34 @@ export async function changePasswordAction(_prev: FormState, form: FormData): Pr
 
 export async function setThemeAction(dark: boolean) {
   const user = await requireUser();
-  updatePreferences(user.id, { theme: dark ? "dark" : "light" });
+  await updatePreferences(user.id, { theme: dark ? "dark" : "light" });
   revalidatePath("/", "layout");
 }
 
 export async function setRemindersAction(on: boolean) {
   const user = await requireUser();
-  updatePreferences(user.id, { notifyReminders: on });
+  await updatePreferences(user.id, { notifyReminders: on });
   revalidatePath("/settings");
 }
 
 export async function openNotificationAction(id: number) {
   const user = await requireUser();
-  markRead(user.id, id);
-  const n = listNotifications(user.id).find((x) => x.id === id);
+  await markRead(user.id, id);
+  const n = await getNotification(user.id, id);
   const link = n?.link && n.link.startsWith("/") && !n.link.startsWith("//") ? n.link : "/notifications";
   redirect(link);
 }
 
 export async function markAllReadAction() {
   const user = await requireUser();
-  markAllRead(user.id);
+  await markAllRead(user.id);
   revalidatePath("/", "layout");
 }
 
 export async function sendMessageAction(conversationId: number, body: string) {
   const user = await requireUser();
   try {
-    return { message: sendMessage(conversationId, user.id, { body }) };
+    return { message: await sendMessage(conversationId, user.id, { body }) };
   } catch (err) {
     return { error: toFormState(err).error };
   }

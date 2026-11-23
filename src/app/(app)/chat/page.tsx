@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Chat" };
 /** Figma "Chat Menu". */
 export default async function ChatListPage() {
   const user = await requireUser();
-  const conversations = listConversations(user.id);
+  const conversations = await listConversations(user.id);
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader backHref="/profile" title="Chat" />

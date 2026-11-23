@@ -12,7 +12,7 @@ import {
 } from "../services/items";
 import { reportItem } from "../services/reports";
 import { openConversation } from "../services/chat";
-import { deleteImage, hasFile, saveImage } from "../storage";
+import { deleteImages, hasFile, saveImage } from "../storage";
 import { itemSchema, parse } from "../validation";
 import { AppError } from "../errors";
 import { toFormState, type FormState } from "./result";
@@ -29,14 +29,14 @@ function itemInput(form: FormData) {
   };
 }
 
-async function savePhotos(form: FormData, limit: number): Promise<string[]> {
+async function savePhotos(form: FormData, limit: number, ownerId: number): Promise<string[]> {
   const files = form.getAll("photos").filter(hasFile);
   if (files.length > limit) throw new AppError(`You can add ${limit} more photo${limit === 1 ? "" : "s"}.`);
   const keys: string[] = [];
   try {
-    for (const f of files) keys.push(await saveImage(f, "item"));
+    for (const f of files) keys.push(await saveImage(f, "item", ownerId));
   } catch (err) {
-    await Promise.all(keys.map(deleteImage));
+    await deleteImages(keys);
     throw err;
   }
   return keys;
@@ -49,10 +49,10 @@ export async function createItemAction(_prev: FormState, form: FormData): Promis
   try {
     const input = itemInput(form);
     parse(itemSchema, input);
-    keys = await savePhotos(form, MAX_ITEM_IMAGES);
-    id = createItem(user.id, input, keys);
+    keys = await savePhotos(form, MAX_ITEM_IMAGES, user.id);
+    id = await createItem(user.id, input, keys);
   } catch (err) {
-    await Promise.all(keys.map(deleteImage));
+    await deleteImages(keys);
     return toFormState(err, form);
   }
   revalidatePath("/me/items");
@@ -67,11 +67,11 @@ export async function updateItemAction(itemId: number, _prev: FormState, form: F
     parse(itemSchema, input);
     const removeImageIds = form.getAll("removeImage").map(Number).filter(Number.isInteger);
     const keptCount = Number(form.get("existingImageCount") ?? 0) - removeImageIds.length;
-    keys = await savePhotos(form, Math.max(0, MAX_ITEM_IMAGES - keptCount));
-    const removed = updateItem(user.id, itemId, input, { removeImageIds, addImageKeys: keys });
-    await Promise.all(removed.map(deleteImage));
+    keys = await savePhotos(form, Math.max(0, MAX_ITEM_IMAGES - keptCount), user.id);
+    const removed = await updateItem(user.id, itemId, input, { removeImageIds, addImageKeys: keys });
+    await deleteImages(removed);
   } catch (err) {
-    await Promise.all(keys.map(deleteImage));
+    await deleteImages(keys);
     return toFormState(err, form);
   }
   revalidatePath(`/items/${itemId}`);
@@ -82,7 +82,7 @@ export async function updateItemAction(itemId: number, _prev: FormState, form: F
 export async function setAvailabilityAction(itemId: number, available: boolean): Promise<FormState> {
   const user = await requireUser();
   try {
-    setItemAvailability(user.id, itemId, available);
+    await setItemAvailability(user.id, itemId, available);
   } catch (err) {
     return toFormState(err);
   }
@@ -94,8 +94,8 @@ export async function setAvailabilityAction(itemId: number, available: boolean):
 export async function deleteItemAction(itemId: number, _prev: FormState): Promise<FormState> {
   const user = await requireUser();
   try {
-    const keys = deleteItem(user.id, itemId);
-    await Promise.all(keys.map(deleteImage));
+    const keys = await deleteItem(user.id, itemId);
+    await deleteImages(keys);
   } catch (err) {
     return toFormState(err);
   }
@@ -106,7 +106,7 @@ export async function deleteItemAction(itemId: number, _prev: FormState): Promis
 export async function reportItemAction(itemId: number, _prev: FormState, form: FormData): Promise<FormState> {
   const user = await requireUser();
   try {
-    reportItem(user.id, { itemId, reason: form.get("reason") ?? undefined, details: form.get("details") ?? "" });
+    await reportItem(user.id, { itemId, reason: form.get("reason") ?? undefined, details: form.get("details") ?? "" });
   } catch (err) {
     return toFormState(err, form);
   }
@@ -115,6 +115,6 @@ export async function reportItemAction(itemId: number, _prev: FormState, form: F
 
 export async function chatWithLenderAction(itemId: number, borrowerId?: number) {
   const user = await requireUser();
-  const conversationId = openConversation(itemId, user.id, borrowerId);
+  const conversationId = await openConversation(itemId, user.id, borrowerId);
   redirect(`/chat/${conversationId}`);
 }

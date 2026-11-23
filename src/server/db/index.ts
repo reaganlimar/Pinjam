@@ -1,70 +1,90 @@
 import "server-only";
-import { DatabaseSync } from "node:sqlite";
-import fs from "node:fs";
-import path from "node:path";
-import { migrations } from "./schema";
+import { Pool, types, type PoolClient } from "pg";
+import { attachDatabasePool } from "@vercel/functions";
+import { Database, type Driver, type Queryable } from "./database";
 
-export type Db = DatabaseSync;
-export type Row = Record<string, unknown>;
+export { Database, PG, pgCode, pgConstraint, type Row } from "./database";
+export { sql, raw, join } from "./sql";
 
-/** Opens a database at `file` (or in memory) and brings its schema up to date. */
-export function openDatabase(file: string): Db {
-  if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new DatabaseSync(file);
-  db.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
-  migrate(db);
-  return db;
-}
+/**
+ * Postgres (Neon) connection. One pool per server instance; on Vercel Fluid compute
+ * `attachDatabasePool` closes idle connections before the function is suspended.
+ *
+ * DATABASE_URL should be Neon's *pooled* connection string (host contains "-pooler").
+ */
 
-function migrate(db: Db) {
-  const { user_version: current } = db.prepare("PRAGMA user_version").get() as { user_version: number };
-  for (let v = current; v < migrations.length; v++) {
-    db.exec("BEGIN");
-    try {
-      db.exec(migrations[v]);
-      db.exec(`PRAGMA user_version = ${v + 1}`);
-      db.exec("COMMIT");
-    } catch (err) {
-      db.exec("ROLLBACK");
-      throw err;
-    }
+// Keep DATE columns as "YYYY-MM-DD" strings (the default would build a local-midnight Date
+// and shift the day when converted to UTC). Counts (int8) come back as numbers.
+const typeParsers = {
+  getTypeParser(oid: number, format?: "text" | "binary") {
+    if (oid === types.builtins.DATE) return (value: string) => value;
+    if (oid === types.builtins.INT8) return (value: string) => Number(value);
+    return types.getTypeParser(oid, format);
+  },
+} as unknown as typeof types;
+
+function createPgDriver(): Driver {
+  const connectionString = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+  if (!connectionString) {
+    throw new Error(
+      "DATABASE_URL is not set. Add your Neon pooled connection string to .env.local (local) or the Vercel project settings.",
+    );
   }
+  const pool = new Pool({
+    connectionString,
+    types: typeParsers,
+    max: 5,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000,
+  });
+  // A dropped idle connection must not crash the process; the pool replaces it.
+  pool.on("error", (err) => console.error("Postgres pool error", err));
+  attachDatabasePool(pool);
+
+  return {
+    query: (text, values) => pool.query(text, values),
+    async transaction(fn) {
+      const client: PoolClient = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await fn(client as Queryable);
+        await client.query("COMMIT");
+        return result;
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  };
 }
 
-// Reuse one connection across hot reloads in development.
-const globalForDb = globalThis as unknown as { pinjamDb?: Db };
+// Reuse one driver across hot reloads in development.
+const globalForDb = globalThis as unknown as { pinjamDriver?: Driver };
+let override: Driver | undefined;
 
-let override: Db | undefined;
-
-/** Tests can point the data layer at an in-memory database. */
-export function setDbForTesting(db: Db | undefined) {
-  override = db;
+/** Tests point the data layer at an in-process Postgres (PGlite). */
+export function setDriverForTesting(driver: Driver | undefined) {
+  override = driver;
 }
 
-export function getDb(): Db {
+function driver(): Driver {
   if (override) return override;
-  if (!globalForDb.pinjamDb) {
-    const file = path.resolve(/*turbopackIgnore: true*/ process.env.DATABASE_PATH ?? "./data/pinjam.db");
-    globalForDb.pinjamDb = openDatabase(file);
-  }
-  return globalForDb.pinjamDb;
+  globalForDb.pinjamDriver ??= createPgDriver();
+  return globalForDb.pinjamDriver;
+}
+
+export function getDb(): Database {
+  return new Database(driver());
 }
 
 /**
- * Runs `fn` inside an IMMEDIATE transaction. SQLite then allows only one writer at a
- * time, so check-then-write logic (like the loan overlap check) can't race.
+ * Runs `fn` in a transaction on one connection. Code that checks and then writes
+ * (e.g. loan overlap) also takes row locks (SELECT … FOR UPDATE) inside it.
  */
-export function transaction<T>(fn: (db: Db) => T): T {
-  const db = getDb();
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const result = fn(db);
-    db.exec("COMMIT");
-    return result;
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
+export function transaction<T>(fn: (db: Database) => Promise<T>): Promise<T> {
+  return driver().transaction((conn) => fn(new Database(conn)));
 }
 
 export const nowIso = () => new Date().toISOString();

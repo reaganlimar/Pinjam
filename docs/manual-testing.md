@@ -1,13 +1,19 @@
 # Manual test script
 
-Two local test accounts were created while testing (they only exist in your local `data/pinjam.db`):
+These two test accounts were used while testing. They were removed from the Neon
+`production` branch on 2026-11-23 and now only exist in the old local `data/pinjam.db`.
+Re-register them to repeat the script:
 
 | Role | Name | Email | Password |
 | --- | --- | --- | --- |
 | Student A (lender) | Alya Putri | alya.putri@binus.ac.id | pinjam-test-123 |
 | Student B (borrower) | Bima Santoso | bima.santoso@binus.ac.id | pinjam-test-456 |
 
-Delete the `data/` folder to start fresh, then repeat:
+Prefer testing on a Neon branch rather than `production` (see `docs/database.md`). If you test on
+production, delete the accounts afterwards. Deleting a user cascades to their sessions, files,
+items and notifications, but delete their reviews, reports, conversations and loans first.
+
+Then repeat:
 
 1. **A** registers, lists "Scientific Calculator" (Electronics, Good, max 3 days, free, pickup Atrium).
 2. **B** registers, finds it on Browse (search "calc"), picks a pickup date and 2 days, sends the request.

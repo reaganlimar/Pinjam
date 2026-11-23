@@ -12,9 +12,9 @@ export const metadata: Metadata = { title: "My Loans" };
 export default async function LoansPage({ searchParams }: PageProps<"/loans">) {
   const user = await requireUser();
   const tab = (await searchParams).tab === "history" ? "history" : "active";
-  const borrowing = activeBorrows(user.id);
-  const lending = activeLends(user.id);
-  const history = tab === "history" ? loanHistory(user.id) : [];
+  const borrowing = await activeBorrows(user.id);
+  const lending = await activeLends(user.id);
+  const history = tab === "history" ? await loanHistory(user.id) : [];
 
   return (
     <div className="mx-auto max-w-3xl">

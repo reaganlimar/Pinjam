@@ -9,7 +9,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   return (
     <AppChrome
       user={{ name: user.fullName, avatarKey: user.avatarKey }}
-      initialCounts={getNavCounts(user.id)}
+      initialCounts={await getNavCounts(user.id)}
       campus={CAMPUS_LABEL}
     >
       {children}

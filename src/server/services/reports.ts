@@ -1,5 +1,5 @@
 import "server-only";
-import { getDb, nowIso, type Row } from "../db";
+import { getDb, PG, pgCode, sql } from "../db";
 import { AppError, notFound } from "../errors";
 import { parse, reportSchema } from "../validation";
 
@@ -12,23 +12,28 @@ export const REPORT_REASONS = {
   other: "Something else",
 } as const;
 
+const alreadyReported = () => new AppError("You've already reported this listing. Thanks, we'll take a look.", "conflict");
+
 /**
  * Stores a report for the Pinjam team to review. There is no moderator dashboard yet:
  * reports are kept in the `reports` table (status 'open').
  */
-export function reportItem(reporterId: number, input: unknown) {
+export async function reportItem(reporterId: number, input: unknown) {
   const data = parse(reportSchema, input);
   const db = getDb();
-  const item = db.prepare("SELECT owner_id FROM items WHERE id = ?").get(data.itemId) as Row | undefined;
+  const item = await db.maybe<{ owner_id: number }>(sql`SELECT owner_id FROM items WHERE id = ${data.itemId}`);
   if (!item) throw notFound("That item");
   if (Number(item.owner_id) === reporterId) throw new AppError("You can't report your own listing.");
-  const existing = db.prepare("SELECT 1 FROM reports WHERE reporter_id = ? AND item_id = ?").get(reporterId, data.itemId);
-  if (existing) throw new AppError("You've already reported this listing. Thanks, we'll take a look.", "conflict");
-  db.prepare(
-    "INSERT INTO reports (reporter_id, item_id, reason, details, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).run(reporterId, data.itemId, data.reason, data.details, nowIso());
+  try {
+    await db.run(sql`
+      INSERT INTO reports (reporter_id, item_id, reason, details)
+      VALUES (${reporterId}, ${data.itemId}, ${data.reason}, ${data.details})`);
+  } catch (err) {
+    if (pgCode(err) === PG.uniqueViolation) throw alreadyReported();
+    throw err;
+  }
 }
 
-export function hasReported(reporterId: number, itemId: number): boolean {
-  return Boolean(getDb().prepare("SELECT 1 FROM reports WHERE reporter_id = ? AND item_id = ?").get(reporterId, itemId));
+export async function hasReported(reporterId: number, itemId: number): Promise<boolean> {
+  return Boolean(await getDb().maybe(sql`SELECT 1 FROM reports WHERE reporter_id = ${reporterId} AND item_id = ${itemId}`));
 }

@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "Notifications" };
 /** Figma "Notifications": rows with an unread dot, grouped by age. */
 export default async function NotificationsPage() {
   const user = await requireUser();
-  const items = listNotifications(user.id);
+  const items = await listNotifications(user.id);
   const year = new Date().getFullYear();
   const groups: [string, Notification[]][] = [
     ["This year", items.filter((n) => new Date(n.createdAt).getFullYear() === year)],

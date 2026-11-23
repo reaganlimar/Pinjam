@@ -9,7 +9,7 @@ export async function GET(req: Request, ctx: RouteContext<"/api/chat/[id]/messag
   const id = Number((await ctx.params).id);
   const after = Number(new URL(req.url).searchParams.get("after") ?? 0) || 0;
   try {
-    return Response.json({ messages: listMessages(id, user.id, after) }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ messages: await listMessages(id, user.id, after) }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     if (err instanceof AppError) return Response.json({ error: err.message }, { status: 404 });
     throw err;

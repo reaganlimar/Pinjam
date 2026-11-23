@@ -4,12 +4,13 @@ import type { NextConfig } from "next";
 // the signed-in user's session, so pages are rendered per request. This keeps the
 // data flow simple (no `use cache` / Suspense-for-cookies requirements).
 const nextConfig: NextConfig = {
-  // node:sqlite is a Node built-in; keep it out of the bundle.
-  serverExternalPackages: ["bcryptjs"],
+  // Node-only packages loaded at runtime instead of being bundled.
+  serverExternalPackages: ["bcryptjs", "pg"],
   experimental: {
     serverActions: {
-      // Up to 4 item photos (5 MB each are rejected server-side) + form fields.
-      bodySizeLimit: "12mb",
+      // Vercel rejects request bodies over 4.5 MB. Photos are compressed in the browser
+      // (src/lib/compress-image.ts) so a listing with 4 photos stays well under this.
+      bodySizeLimit: "4mb",
     },
   },
   turbopack: {

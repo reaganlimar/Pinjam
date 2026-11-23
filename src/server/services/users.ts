@@ -1,8 +1,9 @@
 import "server-only";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
-import { getDb, nowIso, transaction, type Row } from "../db";
+import { getDb, PG, pgCode, pgConstraint, sql, transaction, type Row } from "../db";
 import { AppError, notFound } from "../errors";
+import { TIME_ZONE } from "@/lib/format";
 import {
   changePasswordSchema,
   loginSchema,
@@ -40,36 +41,57 @@ export function toCurrentUser(r: Row): CurrentUser {
     studentVerified: Boolean(r.student_verified_at),
     emailVerified: Boolean(r.email_verified_at),
     theme: r.theme === "dark" ? "dark" : "light",
-    notifyReminders: Number(r.notify_reminders) === 1,
+    notifyReminders: r.notify_reminders === true,
     createdAt: String(r.created_at),
   };
 }
 
+const USER_COLUMNS = sql`id, email, full_name, nim, major, phone, avatar_key, student_id_card_key,
+  student_verified_at, email_verified_at, theme, notify_reminders, created_at`;
+
 // ---------------------------------------------------------------- registration / login
 
-export async function registerUser(input: unknown, studentIdCardKey: string | null): Promise<CurrentUser> {
+function duplicateError(field: "email" | "nim") {
+  return new AppError("An account already exists.", "conflict", {
+    [field]: field === "email" ? "This email is already registered." : "This student ID is already registered.",
+  });
+}
+
+/**
+ * Creates the account. `attachIdCard` lets the caller store the uploaded ID card in the
+ * same transaction once the new user's id is known.
+ */
+export async function registerUser(
+  input: unknown,
+  attachIdCard?: (userId: number, db: import("../db").Database) => Promise<string | null>,
+): Promise<CurrentUser> {
   const data = parse(registerSchema, input);
   const passwordHash = await bcrypt.hash(data.password, 10);
-  return transaction((db) => {
-    const clash = db
-      .prepare("SELECT email, nim FROM users WHERE email = ? OR nim = ?")
-      .get(data.email, data.nim) as Row | undefined;
-    if (clash) {
-      const field = String(clash.email).toLowerCase() === data.email ? "email" : "nim";
-      throw new AppError("An account already exists.", "conflict", {
-        [field]: field === "email" ? "This email is already registered." : "This student ID is already registered.",
-      });
+  try {
+    return await transaction(async (db) => {
+      const clash = await db.maybe<{ email: string }>(
+        sql`SELECT email FROM users WHERE email = ${data.email} OR nim = ${data.nim} LIMIT 1`,
+      );
+      if (clash) throw duplicateError(clash.email === data.email ? "email" : "nim");
+      const row = await db.one(sql`
+        INSERT INTO users (email, password_hash, full_name, nim, rules_accepted_at)
+        VALUES (${data.email}, ${passwordHash}, ${data.fullName}, ${data.nim}, now())
+        RETURNING ${USER_COLUMNS}`);
+      const user = toCurrentUser(row);
+      const cardKey = attachIdCard ? await attachIdCard(user.id, db) : null;
+      if (cardKey) {
+        await db.run(sql`UPDATE users SET student_id_card_key = ${cardKey} WHERE id = ${user.id}`);
+        user.hasStudentIdCard = true;
+      }
+      return user;
+    });
+  } catch (err) {
+    // Two sign-ups racing for the same email/NIM: the unique constraint decides.
+    if (pgCode(err) === PG.uniqueViolation) {
+      throw duplicateError(pgConstraint(err) === "users_nim_key" ? "nim" : "email");
     }
-    const now = nowIso();
-    const row = db
-      .prepare(
-        `INSERT INTO users (email, password_hash, full_name, nim, student_id_card_key,
-                            rules_accepted_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
-      )
-      .get(data.email, passwordHash, data.fullName, data.nim, studentIdCardKey, now, now, now) as Row;
-    return toCurrentUser(row);
-  });
+    throw err;
+  }
 }
 
 let cachedDummyHash: string | undefined;
@@ -77,10 +99,11 @@ const dummyHash = () => (cachedDummyHash ??= bcrypt.hashSync("not-a-real-passwor
 
 export async function verifyCredentials(input: unknown): Promise<CurrentUser> {
   const data = parse(loginSchema, input);
-  const row = getDb().prepare("SELECT * FROM users WHERE email = ?").get(data.email) as Row | undefined;
+  const row = await getDb().maybe(
+    sql`SELECT ${USER_COLUMNS}, password_hash FROM users WHERE email = ${data.email}`,
+  );
   // Compare against a dummy hash when the user doesn't exist to keep timing similar.
-  const hash = row ? String(row.password_hash) : dummyHash();
-  const ok = await bcrypt.compare(data.password, hash);
+  const ok = await bcrypt.compare(data.password, row ? String(row.password_hash) : dummyHash());
   if (!row || !ok) throw new AppError("Email or password is incorrect.", "unauthenticated");
   return toCurrentUser(row);
 }
@@ -92,85 +115,78 @@ export const SESSION_DAYS = 30;
 const hashToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
 
 /** Creates a session and returns the raw token to store in the cookie. */
-export function createSession(userId: number): { token: string; expiresAt: Date } {
+export async function createSession(userId: number): Promise<{ token: string; expiresAt: Date }> {
   const token = crypto.randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
-  getDb()
-    .prepare("INSERT INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)")
-    .run(hashToken(token), userId, expiresAt.toISOString(), nowIso());
+  await getDb().run(
+    sql`INSERT INTO sessions (id, user_id, expires_at) VALUES (${hashToken(token)}, ${userId}, ${expiresAt.toISOString()})`,
+  );
   return { token, expiresAt };
 }
 
-export function findUserBySession(token: string): CurrentUser | null {
-  const row = getDb()
-    .prepare(
-      `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.id = ? AND s.expires_at > ?`,
-    )
-    .get(hashToken(token), nowIso()) as Row | undefined;
+export async function findUserBySession(token: string): Promise<CurrentUser | null> {
+  const row = await getDb().maybe(sql`
+    SELECT ${USER_COLUMNS} FROM users
+    WHERE id = (SELECT user_id FROM sessions WHERE id = ${hashToken(token)} AND expires_at > now())`);
   return row ? toCurrentUser(row) : null;
 }
 
-export function deleteSession(token: string) {
-  getDb().prepare("DELETE FROM sessions WHERE id = ?").run(hashToken(token));
+export async function deleteSession(token: string) {
+  await getDb().run(sql`DELETE FROM sessions WHERE id = ${hashToken(token)} OR expires_at < now()`);
 }
 
 // ---------------------------------------------------------------- profile
 
-export function getUser(id: number): CurrentUser {
-  const row = getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as Row | undefined;
+export async function getUser(id: number): Promise<CurrentUser> {
+  const row = await getDb().maybe(sql`SELECT ${USER_COLUMNS} FROM users WHERE id = ${id}`);
   if (!row) throw notFound("That student");
   return toCurrentUser(row);
 }
 
-export function updateProfile(userId: number, input: unknown, avatarKey?: string | null) {
+/** Updates profile fields; returns the replaced avatar key (if any) so it can be deleted. */
+export async function updateProfile(userId: number, input: unknown, avatarKey?: string | null) {
   const data = parse(profileSchema, input);
   const db = getDb();
-  const previous = db.prepare("SELECT avatar_key FROM users WHERE id = ?").get(userId) as Row;
-  db.prepare(
-    `UPDATE users SET full_name = ?, major = ?, phone = ?, avatar_key = COALESCE(?, avatar_key), updated_at = ?
-     WHERE id = ?`,
-  ).run(data.fullName, data.major, data.phone, avatarKey ?? null, nowIso(), userId);
-  return { replacedAvatarKey: avatarKey ? ((previous.avatar_key as string) ?? null) : null };
+  const previous = await db.one<{ avatar_key: string | null }>(sql`SELECT avatar_key FROM users WHERE id = ${userId}`);
+  await db.run(sql`
+    UPDATE users SET full_name = ${data.fullName}, major = ${data.major}, phone = ${data.phone},
+      avatar_key = COALESCE(${avatarKey ?? null}::text, avatar_key), updated_at = now()
+    WHERE id = ${userId}`);
+  return { replacedAvatarKey: avatarKey ? previous.avatar_key : null };
 }
 
-export function setStudentIdCard(userId: number, key: string) {
+export async function setStudentIdCard(userId: number, key: string): Promise<string | null> {
   const db = getDb();
-  const previous = db.prepare("SELECT student_id_card_key FROM users WHERE id = ?").get(userId) as Row;
-  db.prepare("UPDATE users SET student_id_card_key = ?, updated_at = ? WHERE id = ?").run(key, nowIso(), userId);
-  return (previous.student_id_card_key as string) ?? null;
-}
-
-export function getStudentIdCardKey(userId: number): string | null {
-  const row = getDb().prepare("SELECT student_id_card_key FROM users WHERE id = ?").get(userId) as Row | undefined;
-  return (row?.student_id_card_key as string) ?? null;
+  const previous = await db.one<{ student_id_card_key: string | null }>(
+    sql`SELECT student_id_card_key FROM users WHERE id = ${userId}`,
+  );
+  await db.run(sql`UPDATE users SET student_id_card_key = ${key}, updated_at = now() WHERE id = ${userId}`);
+  return previous.student_id_card_key;
 }
 
 export async function changePassword(userId: number, input: unknown, keepSessionToken: string | null) {
   const data = parse(changePasswordSchema, input);
-  const db = getDb();
-  const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(userId) as Row;
-  if (!(await bcrypt.compare(data.currentPassword, String(row.password_hash)))) {
+  const row = await getDb().one<{ password_hash: string }>(sql`SELECT password_hash FROM users WHERE id = ${userId}`);
+  if (!(await bcrypt.compare(data.currentPassword, row.password_hash))) {
     throw new AppError("Current password is incorrect.", "invalid", {
       currentPassword: "Current password is incorrect.",
     });
   }
   const hash = await bcrypt.hash(data.newPassword, 10);
-  transaction((tx) => {
-    tx.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?").run(hash, nowIso(), userId);
+  await transaction(async (db) => {
+    await db.run(sql`UPDATE users SET password_hash = ${hash}, updated_at = now() WHERE id = ${userId}`);
     // Sign out other devices.
-    tx.prepare("DELETE FROM sessions WHERE user_id = ? AND id <> ?").run(
-      userId,
-      keepSessionToken ? hashToken(keepSessionToken) : "",
+    await db.run(
+      sql`DELETE FROM sessions WHERE user_id = ${userId} AND id <> ${keepSessionToken ? hashToken(keepSessionToken) : ""}`,
     );
   });
 }
 
-export function updatePreferences(userId: number, prefs: { theme?: "light" | "dark"; notifyReminders?: boolean }) {
+export async function updatePreferences(userId: number, prefs: { theme?: "light" | "dark"; notifyReminders?: boolean }) {
   const db = getDb();
-  if (prefs.theme) db.prepare("UPDATE users SET theme = ? WHERE id = ?").run(prefs.theme, userId);
+  if (prefs.theme) await db.run(sql`UPDATE users SET theme = ${prefs.theme} WHERE id = ${userId}`);
   if (prefs.notifyReminders !== undefined) {
-    db.prepare("UPDATE users SET notify_reminders = ? WHERE id = ?").run(prefs.notifyReminders ? 1 : 0, userId);
+    await db.run(sql`UPDATE users SET notify_reminders = ${prefs.notifyReminders} WHERE id = ${userId}`);
   }
 }
 
@@ -183,53 +199,37 @@ export type UserStats = {
   activeLoans: number;
   /** Share of completed borrows returned on or before the due date (null if none yet). */
   onTimeRate: number | null;
-  /** Share of completed lends where the item came back (null if none yet). */
+  /** Share of completed lends where the item came back in the same condition (null if none yet). */
   returnedOkRate: number | null;
   rating: number | null;
   reviewCount: number;
 };
 
-export function getUserStats(userId: number): UserStats {
-  const db = getDb();
-  const one = (sql: string, ...args: (string | number)[]) =>
-    Number((db.prepare(sql).get(...args) as Row).n ?? 0);
-
-  const itemsListed = one("SELECT COUNT(*) n FROM items WHERE owner_id = ? AND deleted_at IS NULL", userId);
-  const timesLent = one("SELECT COUNT(*) n FROM loans WHERE lender_id = ? AND status = 'completed'", userId);
-  const timesBorrowed = one(
-    "SELECT COUNT(*) n FROM loans WHERE borrower_id = ? AND status IN ('borrowed','return_pending','completed')",
-    userId,
-  );
-  const activeLoans = one(
-    "SELECT COUNT(*) n FROM loans WHERE borrower_id = ? AND status IN ('approved','ready_for_pickup','borrowed','return_pending')",
-    userId,
-  );
-  const completedBorrows = one("SELECT COUNT(*) n FROM loans WHERE borrower_id = ? AND status = 'completed'", userId);
-  const onTime = one(
-    `SELECT COUNT(*) n FROM loans WHERE borrower_id = ? AND status = 'completed'
-       AND substr(COALESCE(returned_at, completed_at), 1, 10) <= end_date`,
-    userId,
-  );
-  const lenderClosed = one(
-    "SELECT COUNT(*) n FROM loans WHERE lender_id = ? AND status = 'completed'",
-    userId,
-  );
-  const lenderOk = one(
-    "SELECT COUNT(*) n FROM loans WHERE lender_id = ? AND status = 'completed' AND COALESCE(return_condition,'same') = 'same'",
-    userId,
-  );
-  const rating = db
-    .prepare("SELECT AVG(rating) avg, COUNT(*) n FROM reviews WHERE reviewee_id = ?")
-    .get(userId) as Row;
-
+export async function getUserStats(userId: number): Promise<UserStats> {
+  const r = await getDb().one<Record<string, number | string | null>>(sql`
+    SELECT
+      (SELECT count(*) FROM items WHERE owner_id = ${userId} AND deleted_at IS NULL) AS items_listed,
+      (SELECT count(*) FROM loans WHERE lender_id = ${userId} AND status = 'completed') AS times_lent,
+      (SELECT count(*) FROM loans WHERE borrower_id = ${userId}
+         AND status IN ('borrowed', 'return_pending', 'completed')) AS times_borrowed,
+      (SELECT count(*) FROM loans WHERE borrower_id = ${userId}
+         AND status IN ('approved', 'ready_for_pickup', 'borrowed', 'return_pending')) AS active_loans,
+      (SELECT count(*) FROM loans WHERE borrower_id = ${userId} AND status = 'completed') AS completed_borrows,
+      (SELECT count(*) FROM loans WHERE borrower_id = ${userId} AND status = 'completed'
+         AND (COALESCE(returned_at, completed_at) AT TIME ZONE ${TIME_ZONE})::date <= end_date) AS on_time,
+      (SELECT count(*) FROM loans WHERE lender_id = ${userId} AND status = 'completed'
+         AND COALESCE(return_condition, 'same') = 'same') AS lender_ok,
+      (SELECT avg(rating) FROM reviews WHERE reviewee_id = ${userId}) AS rating,
+      (SELECT count(*) FROM reviews WHERE reviewee_id = ${userId}) AS review_count`);
+  const n = (k: string) => Number(r[k] ?? 0);
   return {
-    itemsListed,
-    timesLent,
-    timesBorrowed,
-    activeLoans,
-    onTimeRate: completedBorrows ? onTime / completedBorrows : null,
-    returnedOkRate: lenderClosed ? lenderOk / lenderClosed : null,
-    rating: rating.avg === null ? null : Math.round(Number(rating.avg) * 10) / 10,
-    reviewCount: Number(rating.n),
+    itemsListed: n("items_listed"),
+    timesLent: n("times_lent"),
+    timesBorrowed: n("times_borrowed"),
+    activeLoans: n("active_loans"),
+    onTimeRate: n("completed_borrows") ? n("on_time") / n("completed_borrows") : null,
+    returnedOkRate: n("times_lent") ? n("lender_ok") / n("times_lent") : null,
+    rating: r.rating === null ? null : Math.round(Number(r.rating) * 10) / 10,
+    reviewCount: n("review_count"),
   };
 }

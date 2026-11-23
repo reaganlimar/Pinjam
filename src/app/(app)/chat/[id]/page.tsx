@@ -17,13 +17,13 @@ export default async function ChatPage({ params }: PageProps<"/chat/[id]">) {
   const id = Number((await params).id);
   let convo;
   try {
-    convo = getConversation(id, user.id);
+    convo = await getConversation(id, user.id);
   } catch (err) {
     if (err instanceof AppError) notFound();
     throw err;
   }
-  const messages = listMessages(id, user.id);
-  const stats = getUserStats(convo.other.id);
+  const messages = await listMessages(id, user.id);
+  const stats = await getUserStats(convo.other.id);
   return (
     <div className="mx-auto flex h-dvh max-w-3xl flex-col md:h-[calc(100dvh-72px-24px)]">
       <header className="-mx-4 flex items-center gap-3 border-b border-line bg-surface px-4 py-3 md:mx-0 md:mt-6 md:rounded-t-[12px] md:border md:border-b">

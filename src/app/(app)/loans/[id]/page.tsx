@@ -50,18 +50,18 @@ export default async function LoanPage({ params, searchParams }: PageProps<"/loa
   const { done } = await searchParams;
   let data;
   try {
-    data = getLoanForUser(id, user.id);
+    data = await getLoanForUser(id, user.id);
   } catch (err) {
     if (err instanceof AppError) notFound();
     throw err;
   }
   const { loan, role, events } = data;
   const other = role === "borrower" ? loan.lender : loan.borrower;
-  const otherStats = getUserStats(other.id);
+  const otherStats = await getUserStats(other.id);
   // Contact numbers are only shared once a loan is approved and still in progress.
-  const otherPhone = (RESERVING_STATUSES as readonly string[]).includes(loan.status) ? getUser(other.id).phone : null;
+  const otherPhone = (RESERVING_STATUSES as readonly string[]).includes(loan.status) ? (await getUser(other.id)).phone : null;
   const actions = availableActions(loan.status, role);
-  const reviewed = loan.status === "completed" ? hasReviewed(loan.id, user.id) : true;
+  const reviewed = loan.status === "completed" ? await hasReviewed(loan.id, user.id) : true;
   const returnedOnTime = loan.returnedAt ? loan.returnedAt.slice(0, 10) <= loan.endDate : null;
   const overdue = loan.status === "borrowed" && loan.endDate < todayDateOnly();
   // Figma confirmation screens: "Item received" right after pickup, "Item returned" once complete.

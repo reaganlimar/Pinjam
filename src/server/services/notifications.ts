@@ -1,5 +1,5 @@
 import "server-only";
-import { getDb, nowIso, type Db, type Row } from "../db";
+import { getDb, sql, type Database, type Row } from "../db";
 import { addDays, todayDateOnly } from "@/lib/format";
 
 export type NotificationType =
@@ -25,14 +25,14 @@ export type Notification = {
   createdAt: string;
 };
 
-export function notify(
-  db: Db,
+export async function notify(
+  db: Database,
   userId: number,
   n: { type: NotificationType; title: string; body?: string; link?: string },
 ) {
-  db.prepare(
-    "INSERT INTO notifications (user_id, type, title, body, link, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(userId, n.type, n.title, n.body ?? "", n.link ?? null, nowIso());
+  await db.run(sql`
+    INSERT INTO notifications (user_id, type, title, body, link)
+    VALUES (${userId}, ${n.type}, ${n.title}, ${n.body ?? ""}, ${n.link ?? null})`);
 }
 
 const toNotification = (r: Row): Notification => ({
@@ -45,57 +45,57 @@ const toNotification = (r: Row): Notification => ({
   createdAt: String(r.created_at),
 });
 
-export function listNotifications(userId: number, limit = 100): Notification[] {
-  return (
-    getDb()
-      .prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?")
-      .all(userId, limit) as Row[]
-  ).map(toNotification);
+export async function listNotifications(userId: number, limit = 100): Promise<Notification[]> {
+  const rows = await getDb().many(
+    sql`SELECT * FROM notifications WHERE user_id = ${userId} ORDER BY id DESC LIMIT ${limit}`,
+  );
+  return rows.map(toNotification);
 }
 
-export function unreadCount(userId: number): number {
-  const r = getDb()
-    .prepare("SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND read_at IS NULL")
-    .get(userId) as Row;
+export async function getNotification(userId: number, id: number): Promise<Notification | null> {
+  const row = await getDb().maybe(sql`SELECT * FROM notifications WHERE id = ${id} AND user_id = ${userId}`);
+  return row ? toNotification(row) : null;
+}
+
+export async function unreadCount(userId: number): Promise<number> {
+  const r = await getDb().one<{ n: number }>(
+    sql`SELECT count(*) AS n FROM notifications WHERE user_id = ${userId} AND read_at IS NULL`,
+  );
   return Number(r.n);
 }
 
-export function markRead(userId: number, id: number) {
-  getDb()
-    .prepare("UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL")
-    .run(nowIso(), id, userId);
+export async function markRead(userId: number, id: number) {
+  await getDb().run(
+    sql`UPDATE notifications SET read_at = now() WHERE id = ${id} AND user_id = ${userId} AND read_at IS NULL`,
+  );
 }
 
-export function markAllRead(userId: number) {
-  getDb()
-    .prepare("UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL")
-    .run(nowIso(), userId);
+export async function markAllRead(userId: number) {
+  await getDb().run(sql`UPDATE notifications SET read_at = now() WHERE user_id = ${userId} AND read_at IS NULL`);
 }
 
 /**
  * There's no background job runner, so "return date approaching" reminders are created
  * lazily whenever the borrower loads a page: any borrowed item due today or tomorrow
- * gets exactly one reminder (tracked by loans.reminder_sent_at).
+ * gets exactly one reminder (tracked by loans.reminder_sent_at, claimed atomically).
  */
-export function generateDueReminders(userId: number) {
+export async function generateDueReminders(userId: number) {
   const db = getDb();
-  const prefs = db.prepare("SELECT notify_reminders FROM users WHERE id = ?").get(userId) as Row | undefined;
-  if (!prefs || Number(prefs.notify_reminders) !== 1) return;
-  const tomorrow = addDays(todayDateOnly(), 1);
-  const due = db
-    .prepare(
-      `SELECT l.id, l.end_date, i.name FROM loans l JOIN items i ON i.id = l.item_id
-       WHERE l.borrower_id = ? AND l.status = 'borrowed' AND l.reminder_sent_at IS NULL AND l.end_date <= ?`,
-    )
-    .all(userId, tomorrow) as Row[];
+  const today = todayDateOnly();
+  const due = await db.many<{ id: number; end_date: string; name: string }>(sql`
+    UPDATE loans l SET reminder_sent_at = now()
+    FROM items i, users u
+    WHERE i.id = l.item_id AND u.id = l.borrower_id AND u.notify_reminders
+      AND l.borrower_id = ${userId} AND l.status = 'borrowed' AND l.reminder_sent_at IS NULL
+      AND l.end_date <= ${addDays(today, 1)}::date
+    RETURNING l.id, l.end_date, i.name`);
   for (const loan of due) {
-    const overdue = String(loan.end_date) < todayDateOnly();
-    notify(db, userId, {
+    const overdue = loan.end_date < today;
+    await notify(db, userId, {
       type: "loan_due_soon",
       title: overdue ? `${loan.name} is overdue` : `Return ${loan.name} soon`,
       body: overdue ? "Please return it as soon as you can." : "Your return date is approaching.",
       link: `/loans/${loan.id}`,
     });
-    db.prepare("UPDATE loans SET reminder_sent_at = ? WHERE id = ?").run(nowIso(), Number(loan.id));
   }
 }

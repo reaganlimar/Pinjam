@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { CornerDownLeft } from "lucide-react";
 import { sendMessageAction } from "@/server/actions/account";
 import { cn } from "@/lib/cn";
+import { formatTime } from "@/lib/format";
 import type { ChatMessage } from "@/server/services/chat";
 
 const POLL_MS = 4000;
@@ -78,7 +79,7 @@ export function ChatThread({ conversationId, meId, initial }: { conversationId: 
                   >
                     {m.body}
                     <span className={cn("mt-0.5 block text-[11px]", mine ? "text-on-primary/70" : "text-muted")}>
-                      {new Date(m.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      {formatTime(m.createdAt)}
                     </span>
                   </p>
                 </li>

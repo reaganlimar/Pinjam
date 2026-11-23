@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { endSession, startSession } from "../session";
 import { registerUser, verifyCredentials } from "../services/users";
-import { deleteImage, hasFile, saveImage } from "../storage";
+import { hasFile, saveImage } from "../storage";
 import { parse, registerSchema } from "../validation";
 import { toFormState, type FormState } from "./result";
 
@@ -31,15 +31,14 @@ export async function registerAction(_prev: FormState, form: FormData): Promise<
     password: form.get("password"),
     agree: form.get("agree") ?? undefined,
   };
-  let cardKey: string | null = null;
   try {
-    parse(registerSchema, input); // validate fields before storing the photo
+    parse(registerSchema, input); // validate fields before reading the photo
     const card = form.get("studentIdCard");
-    if (hasFile(card)) cardKey = await saveImage(card, "idcard");
-    const user = await registerUser(input, cardKey);
+    // The ID card is stored in the same transaction as the new user, so a failed
+    // sign-up never leaves an orphaned file behind.
+    const user = await registerUser(input, hasFile(card) ? (userId, db) => saveImage(card, "idcard", userId, db) : undefined);
     await startSession(user.id);
   } catch (err) {
-    await deleteImage(cardKey);
     return toFormState(err, form);
   }
   redirect("/browse?welcome=1");

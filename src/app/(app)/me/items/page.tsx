@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: "My listed items" };
 export default async function MyItemsPage({ searchParams }: PageProps<"/me/items">) {
   const user = await requireUser();
   const { deleted } = await searchParams;
-  const items = listOwnedItems(user.id);
+  const items = await listOwnedItems(user.id);
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader backHref="/profile" title="My listed items" />

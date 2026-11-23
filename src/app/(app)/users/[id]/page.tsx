@@ -24,14 +24,14 @@ export default async function UserProfilePage({ params, searchParams }: PageProp
   const { all } = await searchParams;
   let user;
   try {
-    user = getUser(id);
+    user = await getUser(id);
   } catch (err) {
     if (err instanceof AppError) notFound();
     throw err;
   }
-  const stats = getUserStats(id);
-  const items = listUserItems(id);
-  const reviews = reviewsFor(id, 10);
+  const stats = await getUserStats(id);
+  const items = await listUserItems(id);
+  const reviews = await reviewsFor(id, 10);
   const shown = all ? items : items.slice(0, 3);
 
   return (

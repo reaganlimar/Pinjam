@@ -13,7 +13,7 @@ export async function requestLoanAction(itemId: number, _prev: FormState, form: 
   const user = await requireUser();
   let loanId: number;
   try {
-    loanId = requestLoan(user.id, {
+    loanId = await requestLoan(user.id, {
       itemId,
       startDate: form.get("startDate") ?? undefined,
       days: form.get("days") || undefined,
@@ -40,7 +40,7 @@ export async function loanTransitionAction(loanId: number, _prev: FormState, for
   try {
     if (!LOAN_ACTIONS.includes(action)) throw new AppError("Unknown action.");
     const cond = String(form.get("returnCondition") ?? "same");
-    transitionLoan(loanId, user.id, action, {
+    await transitionLoan(loanId, user.id, action, {
       returnCondition: (RETURN_CONDITIONS as readonly string[]).includes(cond) ? (cond as ReturnCondition) : "same",
       note: String(form.get("note") ?? "").slice(0, 300) || undefined,
     });
@@ -56,7 +56,7 @@ export async function loanTransitionAction(loanId: number, _prev: FormState, for
 export async function markFeeReceivedAction(loanId: number): Promise<FormState> {
   const user = await requireUser();
   try {
-    markFeeReceived(loanId, user.id);
+    await markFeeReceived(loanId, user.id);
   } catch (err) {
     return toFormState(err);
   }
@@ -67,7 +67,7 @@ export async function markFeeReceivedAction(loanId: number): Promise<FormState> 
 export async function reviewAction(loanId: number, _prev: FormState, form: FormData): Promise<FormState> {
   const user = await requireUser();
   try {
-    createReview(user.id, { loanId, rating: form.get("rating") ?? undefined, comment: form.get("comment") ?? "" });
+    await createReview(user.id, { loanId, rating: form.get("rating") ?? undefined, comment: form.get("comment") ?? "" });
   } catch (err) {
     return toFormState(err, form);
   }

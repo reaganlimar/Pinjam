@@ -12,7 +12,7 @@ export default async function NewItemPage() {
   return (
     <div className="mx-auto max-w-xl">
       <PageHeader backHref="/me/items" title="List an item" />
-      <ItemForm action={createItemAction} categories={listCategories()} submitLabel="Publish item" />
+      <ItemForm action={createItemAction} categories={await listCategories()} submitLabel="Publish item" />
     </div>
   );
 }

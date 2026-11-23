@@ -14,7 +14,7 @@ export default async function RequestedPage({ params }: PageProps<"/loans/[id]/r
   const user = await requireUser();
   let data;
   try {
-    data = getLoanForUser(Number((await params).id), user.id);
+    data = await getLoanForUser(Number((await params).id), user.id);
   } catch (err) {
     if (err instanceof AppError) notFound();
     throw err;
