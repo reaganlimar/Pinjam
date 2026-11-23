@@ -51,6 +51,14 @@ npm run dev
 
 ### On Vercel
 
+Vercel project `pinjam` has `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct) set
+as **sensitive** variables for Production and Preview. To change them: Project → Settings →
+Environment Variables. Sensitive values can't be read back, only replaced.
+
+`vercel.json` pins functions to `sin1` (Singapore), the same region as the Neon database
+(`aws-ap-southeast-1`). Without it, Vercel defaults to Washington (`iad1`), and every query would
+cross the Pacific.
+
 `package.json` has a `vercel-build` script, which Vercel runs instead of `build`:
 
 ```
