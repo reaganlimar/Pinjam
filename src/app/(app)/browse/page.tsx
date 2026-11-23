@@ -26,7 +26,7 @@ export default async function BrowsePage({ searchParams }: PageProps<"/browse">)
     sort: SORT_OPTIONS.some((o) => o.value === one(sp.sort)) ? (one(sp.sort) as BrowseFilters["sort"]) : "newest",
   };
   const categories = await listCategories();
-  const items = await browseItems(user.id, filters);
+  const items = await browseItems(filters);
   const filtered = Boolean(filters.q || filters.category || filters.price);
 
   /** Builds a /browse URL that keeps the other filters. */
@@ -113,7 +113,7 @@ export default async function BrowsePage({ searchParams }: PageProps<"/browse">)
         {filters.q ? `Results for “${filters.q}”` : "Items available"}
       </h2>
       {items.length ? (
-        <ItemGrid items={items} />
+        <ItemGrid items={items} viewerId={user.id} />
       ) : filtered ? (
         <EmptyState
           title="No items match"

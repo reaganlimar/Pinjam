@@ -109,9 +109,12 @@ const ORDER_BY: Record<NonNullable<BrowseFilters["sort"]>, string> = {
   name: "lower(i.name) ASC, i.id",
 };
 
-/** Items other students have listed (the viewer's own items are excluded). */
-export async function browseItems(viewerId: number, filters: BrowseFilters): Promise<ItemSummary[]> {
-  const where = [sql`i.deleted_at IS NULL`, sql`i.is_available`, sql`i.owner_id <> ${viewerId}`];
+/**
+ * Every listing that's live (not deleted, not paused by its owner), including the viewer's
+ * own, which the card marks as "Your item" so students can see their listing went up.
+ */
+export async function browseItems(filters: BrowseFilters): Promise<ItemSummary[]> {
+  const where = [sql`i.deleted_at IS NULL`, sql`i.is_available`];
   if (filters.q?.trim()) {
     const pattern = `%${filters.q.trim().replace(/[\\%_]/g, (m) => "\\" + m)}%`;
     where.push(sql`(i.name ILIKE ${pattern} OR i.description ILIKE ${pattern})`);
@@ -126,6 +129,7 @@ export async function browseItems(viewerId: number, filters: BrowseFilters): Pro
   return rows.map(toSummary);
 }
 
+/** Newest listings from other students (for the dashboard's "Recently listed"). */
 export async function recentItems(viewerId: number, limit = 4): Promise<ItemSummary[]> {
   const rows = await getDb().many(sql`
     ${summarySelect()}

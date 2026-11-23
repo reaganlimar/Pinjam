@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setDriverForTesting } from "../db";
 import { createTestDriver } from "@/test/pglite";
-import { createItem, deleteItem, getItem } from "./items";
+import { browseItems, createItem, deleteItem, getItem, setItemAvailability } from "./items";
 import { requestLoan, transitionLoan, getLoanForUser, markFeeReceived } from "./loans";
 import { listNotifications, unreadCount } from "./notifications";
 import { createReview } from "./reviews";
@@ -149,6 +149,20 @@ describe("borrowing workflow", () => {
     await expect(markFeeReceived(loanId, b.id)).rejects.toThrow(AppError);
     await markFeeReceived(loanId, a.id);
     expect((await getLoanForUser(loanId, b.id)).loan.feeReceivedAt).not.toBeNull();
+  });
+
+  it("shows every live listing in Browse, including your own, but not paused or deleted ones", async () => {
+    const [a, b] = [await student(1), await student(2)];
+    const mine = await calculator(a.id);
+    const paused = await calculator(a.id);
+    const removed = await calculator(a.id);
+    const theirs = await calculator(b.id);
+    await setItemAvailability(a.id, paused, false);
+    await deleteItem(a.id, removed);
+
+    const ids = (await browseItems({})).map((i) => i.id).sort();
+    expect(ids).toEqual([mine, theirs].sort());
+    expect((await browseItems({ q: "calc" })).map((i) => i.owner.id)).toContain(a.id);
   });
 
   it("only lets owners delete idle listings and declines pending requests", async () => {
