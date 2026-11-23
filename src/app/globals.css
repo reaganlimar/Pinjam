@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/* Pinjam design tokens — taken from the Figma prototype (Pinjam Venture Prototype). */
+:root {
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface-sunken: #eef0f5;
+  --text: #0b0d12;
+  --text-muted: #6a7284;
+  --line: #a1a7b3;
+  --line-soft: #d9dce3;
+  --primary: #1f4fd8;
+  --primary-hover: #1a43ba;
+  --primary-active: #163a9f;
+  --primary-soft: #e8eeff;
+  --on-primary: #ffffff;
+  --success-bg: #e1f4e9;
+  --success: #1e7a4a;
+  --warning-bg: #fff1d6;
+  --warning: #8a5a00;
+  --danger-bg: #fde8e8;
+  --danger: #c02626;
+  --info-bg: #e8eeff;
+  --info: #1f4fd8;
+  --neutral-bg: #eceef2;
+  --neutral: #4b5263;
+  --shadow-color: 16 24 40;
+  color-scheme: light;
+}
+
+/* Appearance → Dark (Settings). Not in the Figma file; derived from the same palette. */
+:root[data-theme="dark"] {
+  --bg: #0e1117;
+  --surface: #171b24;
+  --surface-sunken: #11151d;
+  --text: #e8eaf0;
+  --text-muted: #9aa3b5;
+  --line: #4a5163;
+  --line-soft: #2a303c;
+  --primary: #5b82f0;
+  --primary-hover: #7194f3;
+  --primary-active: #4a71e0;
+  --primary-soft: #1c2540;
+  --on-primary: #ffffff;
+  --success-bg: #12301f;
+  --success: #6fd39b;
+  --warning-bg: #3a2c0c;
+  --warning: #f2c46d;
+  --danger-bg: #3a1515;
+  --danger: #ff8a8a;
+  --info-bg: #1c2540;
+  --info: #8fa9f5;
+  --neutral-bg: #232836;
+  --neutral: #b4bccb;
+  --shadow-color: 0 0 0;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--surface-sunken);
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-active: var(--primary-active);
+  --color-primary-soft: var(--primary-soft);
+  --color-on-primary: var(--on-primary);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-neutral: var(--neutral);
+  --color-neutral-bg: var(--neutral-bg);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bebas), "Arial Narrow", sans-serif;
+  --radius-field: 10px;
+  --radius-card: 12px;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  letter-spacing: 0.01em;
+}
+
+/* Visible keyboard focus everywhere. */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Placeholder option ("Select day(s)", "Electronics, Tools…") looks like a placeholder. */
+select:has(option[value=""]:checked) {
+  color: var(--text-muted);
+}
+
+/* Horizontally scrolling chip rows without a visible scrollbar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.6;
+  cursor: pointer;
+}
+:root[data-theme="dark"] input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
