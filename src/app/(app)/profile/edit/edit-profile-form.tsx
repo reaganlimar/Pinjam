@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { updateProfileAction } from "@/server/actions/account";
 import { Field, FormMessage, Input } from "@/components/ui/field";
@@ -12,10 +13,10 @@ type User = {
   major: string;
   phone: string;
   email: string;
-  nim: string;
+  nim: string | null;
   avatarKey: string | null;
-  hasStudentIdCard: boolean;
-  studentVerified: boolean;
+  isAdmin: boolean;
+  verificationLabel: string;
 };
 
 export function EditProfileForm({ user }: { user: User }) {
@@ -41,24 +42,19 @@ export function EditProfileForm({ user }: { user: User }) {
         <Field label="Student email" name="email-readonly" hint="Can't be changed.">
           <Input name="email-readonly" value={user.email} readOnly disabled />
         </Field>
-        <Field label="Student ID (NIM)" name="nim-readonly" hint="Can't be changed.">
-          <Input name="nim-readonly" value={user.nim} readOnly disabled />
-        </Field>
+        {user.nim !== null && (
+          <Field label="Student ID (NIM)" name="nim-readonly" hint="Can't be changed.">
+            <Input name="nim-readonly" value={user.nim} readOnly disabled />
+          </Field>
+        )}
       </div>
-      {!user.studentVerified && (
-        <div>
-          <p className="mb-2 text-[13px] font-semibold text-ink">Student ID card</p>
-          <PhotoInput
-            name="studentIdCard"
-            label={user.hasStudentIdCard ? "Replace student ID photo" : "Add student ID photo"}
-            error={err.studentIdCard}
-          />
-          <p className="mt-2 text-[12px] text-muted">
-            {user.hasStudentIdCard
-              ? "Uploaded. Verification isn't automated yet, so your account shows as pending."
-              : "Only you can see this photo. It's kept for identity checks."}
-          </p>
-        </div>
+      {!user.isAdmin && (
+        <p className="rounded-[10px] bg-sunken px-4 py-3 text-[13px] text-muted">
+          Student ID card: {user.verificationLabel}.{" "}
+          <Link href="/verification" className="font-semibold text-primary underline underline-offset-2">
+            Manage student verification
+          </Link>
+        </p>
       )}
       <FormMessage error={state.error} />
       <SubmitButton className="w-full" pendingLabel="Saving…">

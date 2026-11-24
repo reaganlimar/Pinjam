@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, Tabs } from "@/components/ui/misc";
 import { LinkButton } from "@/components/ui/button";
 import { ReceivedRequestCard, SentRequestCard } from "@/components/loans/loan-cards";
+import { can } from "@/lib/permissions";
 
 export const metadata: Metadata = { title: "Requests" };
 
@@ -29,7 +30,9 @@ export default async function RequestsPage({ searchParams }: PageProps<"/request
       <div className="mt-6 space-y-3">
         {tab === "received" ? (
           received.length ? (
-            received.map((loan) => <ReceivedRequestCard key={loan.id} loan={loan} />)
+            received.map((loan) => (
+              <ReceivedRequestCard key={loan.id} loan={loan} approveBlockedFor={can(user, "approve_loan") ? undefined : user} />
+            ))
           ) : (
             <EmptyState
               title="No requests yet"

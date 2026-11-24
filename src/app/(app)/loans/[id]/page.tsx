@@ -18,6 +18,8 @@ import { ReviewForm } from "@/components/loans/review-form";
 import { FeeReceivedButton } from "@/components/loans/fee-received-button";
 import { formatDateTime, formatDay, formatRupiah, pluralDays, todayDateOnly } from "@/lib/format";
 import { availableActions, RESERVING_STATUSES, STATUS_LABEL, STATUS_TONE, type LoanStatus } from "@/lib/loan-status";
+import { can } from "@/lib/permissions";
+import { VerificationRequired } from "@/components/verification/verification-required";
 
 export const metadata: Metadata = { title: "Loan" };
 
@@ -60,7 +62,9 @@ export default async function LoanPage({ params, searchParams }: PageProps<"/loa
   const otherStats = await getUserStats(other.id);
   // Contact numbers are only shared once a loan is approved and still in progress.
   const otherPhone = (RESERVING_STATUSES as readonly string[]).includes(loan.status) ? (await getUser(other.id)).phone : null;
-  const actions = availableActions(loan.status, role);
+  // Approving needs a verified account (enforced in transitionLoan); other steps stay open.
+  const approveBlocked = role === "lender" && !can(user, "approve_loan");
+  const actions = availableActions(loan.status, role).filter((a) => !(a === "approve" && approveBlocked));
   const reviewed = loan.status === "completed" ? await hasReviewed(loan.id, user.id) : true;
   const returnedOnTime = loan.returnedAt ? loan.returnedAt.slice(0, 10) <= loan.endDate : null;
   const overdue = loan.status === "borrowed" && loan.endDate < todayDateOnly();
@@ -124,6 +128,7 @@ export default async function LoanPage({ params, searchParams }: PageProps<"/loa
           </p>
         )}
 
+        {approveBlocked && loan.status === "pending" && <VerificationRequired actor={user} capability="approve_loan" />}
         <LoanActionForm loanId={loan.id} actions={actions} size="lg" />
 
         <dl className="grid grid-cols-2 gap-y-2.5 rounded-[12px] border border-line bg-surface p-4 text-[14px]">

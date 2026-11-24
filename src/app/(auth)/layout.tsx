@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/server/session";
+import { getCurrentUser, homeFor } from "@/server/session";
 
 /** Sign in / register: a single centred column like the Figma mobile screens. */
 export default async function AuthLayout({ children }: LayoutProps<"/">) {
-  if (await getCurrentUser()) redirect("/browse");
+  const user = await getCurrentUser();
+  if (user) redirect(homeFor(user));
   return (
     <div className="min-h-dvh bg-bg">
       <div className="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col px-6 md:justify-center md:py-12">

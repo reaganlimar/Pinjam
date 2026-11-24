@@ -5,7 +5,7 @@ import { browseItems, createItem, deleteItem, getItem, setItemAvailability } fro
 import { requestLoan, transitionLoan, getLoanForUser, markFeeReceived } from "./loans";
 import { listNotifications, unreadCount } from "./notifications";
 import { createReview } from "./reviews";
-import { registerUser } from "./users";
+import { verifiedStudent } from "@/test/accounts";
 import { addDays, todayDateOnly } from "@/lib/format";
 import { AppError } from "../errors";
 
@@ -21,14 +21,9 @@ afterEach(async () => {
   await close();
 });
 
+/** Borrowing and lending need a verified student ID (see verification.test.ts for the review flow). */
 function student(n: number) {
-  return registerUser({
-    fullName: `Student ${n}`,
-    nim: `2600${n}0000${n}`,
-    email: `student${n}@binus.ac.id`,
-    password: "password123",
-    agree: "on",
-  });
+  return verifiedStudent(n);
 }
 
 function calculator(ownerId: number, price = 0) {

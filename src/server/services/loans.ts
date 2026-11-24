@@ -4,6 +4,7 @@ import { AppError, forbidden, notFound } from "../errors";
 import { loanRequestSchema, parse } from "../validation";
 import { notify } from "./notifications";
 import { lockItem } from "./items";
+import { assertCan } from "../permissions";
 import { addDays, formatDay, todayDateOnly } from "@/lib/format";
 import {
   availableActions,
@@ -128,6 +129,8 @@ export async function requestLoan(borrowerId: number, input: unknown): Promise<n
   const data = parse(loanRequestSchema, input);
   try {
     return await transaction(async (db) => {
+      // Only verified students (and admins) may borrow.
+      await assertCan(db, borrowerId, "request_loan");
       // Lock the item so concurrent requests/approvals for it run one at a time.
       const item = await lockItem(db, data.itemId);
       if (Number(item.owner_id) === borrowerId) throw forbidden("You can't borrow your own item.");
@@ -245,6 +248,9 @@ async function runTransition(
   const link = `/loans/${loanId}`;
 
   if (action === "approve") {
+    // Declining, handing over and confirming returns stay open to every lender, so loans
+    // already under way can finish; approving a new one needs a verified account.
+    await assertCan(db, actorId, "approve_loan");
     if (loan.item_deleted !== null) throw new AppError("This listing was removed.", "conflict");
     const clash = await findOverlapping(db, Number(loan.item_id), String(loan.start_date), String(loan.end_date), loanId);
     if (clash.length) throw new AppError("You've already approved another request for these dates.", "conflict");

@@ -47,7 +47,9 @@ export default async function UserProfilePage({ params, searchParams }: PageProp
         </div>
       </div>
       <div className="mt-3">
-        {user.studentVerified ? (
+        {user.isAdmin ? (
+          <Badge tone="info">Pinjam admin</Badge>
+        ) : user.studentVerified ? (
           <Badge tone="success">Verified {UNIVERSITY.split(" ")[0]} student</Badge>
         ) : (
           <Badge tone="neutral">Student ID not yet verified</Badge>

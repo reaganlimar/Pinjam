@@ -7,14 +7,21 @@ import { chatWithLenderAction } from "@/server/actions/items";
 import { formatDay, formatRupiah, pluralDays } from "@/lib/format";
 import { availableActions, STATUS_LABEL, STATUS_TONE, type LoanAction } from "@/lib/loan-status";
 import type { LoanView } from "@/server/services/loans";
+import { denialMessage, type Actor } from "@/lib/permissions";
 
 function feeLine(loan: LoanView) {
   return loan.feeTotal > 0 ? ` · ${formatRupiah(loan.feeTotal)}` : "";
 }
 
-/** Requests → Received card: "Allen wants Eraser" with Decline / Approve (Figma). */
-export function ReceivedRequestCard({ loan }: { loan: LoanView }) {
-  const actions = availableActions(loan.status, "lender").filter((a) => a !== "cancel");
+/**
+ * Requests → Received card: "Allen wants Eraser" with Decline / Approve (Figma).
+ * `approveBlockedFor` hides Approve for an unverified lender (the server refuses it anyway);
+ * Decline stays so requests never get stuck.
+ */
+export function ReceivedRequestCard({ loan, approveBlockedFor }: { loan: LoanView; approveBlockedFor?: Actor }) {
+  const actions = availableActions(loan.status, "lender").filter(
+    (a) => a !== "cancel" && !(a === "approve" && approveBlockedFor),
+  );
   return (
     <article className="rounded-[12px] border border-line bg-surface p-3.5">
       <div className="flex items-start gap-3">
@@ -43,6 +50,11 @@ export function ReceivedRequestCard({ loan }: { loan: LoanView }) {
           </button>
         </form>
       </div>
+      {approveBlockedFor && loan.status === "pending" && (
+        <p className="mt-3 rounded-[10px] bg-warning-bg px-3 py-2 text-[13px] text-warning">
+          {denialMessage(approveBlockedFor, "approve_loan")}
+        </p>
+      )}
       <LoanActionForm loanId={loan.id} actions={orderLenderActions(actions)} returnTo="/requests" className="mt-3" />
     </article>
   );

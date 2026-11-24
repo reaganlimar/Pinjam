@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireUser } from "@/server/session";
 import { PageHeader } from "@/components/ui/page-header";
 import { EditProfileForm } from "./edit-profile-form";
+import { VERIFICATION_LABEL } from "@/lib/verification";
 
 export const metadata: Metadata = { title: "Edit profile" };
 
@@ -18,8 +19,8 @@ export default async function EditProfilePage() {
           email: user.email,
           nim: user.nim,
           avatarKey: user.avatarKey,
-          hasStudentIdCard: user.hasStudentIdCard,
-          studentVerified: user.studentVerified,
+          isAdmin: user.isAdmin,
+          verificationLabel: VERIFICATION_LABEL[user.verificationStatus].toLowerCase(),
         }}
       />
     </div>

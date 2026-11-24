@@ -22,6 +22,8 @@ connection string is never sent to the browser.
 | `NEXT_PUBLIC_TIME_ZONE` | no | Campus time zone, default `Asia/Jakarta`. Vercel runs in UTC, so dates use this zone. |
 | `ALLOWED_EMAIL_DOMAINS` | no | Default `binus.ac.id`. |
 | `NEXT_PUBLIC_UNIVERSITY_NAME`, `NEXT_PUBLIC_CAMPUS_NAME` | no | Display text. |
+| `OCR_PROVIDER`, `OCR_TIMEOUT_MS`, `ID_IMAGE_RETENTION_DAYS` | no | Student ID verification, see [verification.md](verification.md). |
+| `ADMIN_EMAIL`, `ADMIN_NAME`, `APP_URL` | no | Only `npm run admin:bootstrap`. |
 
 Use `sslmode=verify-full` in connection strings. `sslmode=require` also works today, but the `pg`
 driver prints a warning that its meaning will change in the next major version.
@@ -75,7 +77,11 @@ previous deployment keeps serving traffic. If you'd rather run migrations by han
 ## Schema overview
 
 `users`, `sessions`, `files`, `categories`, `items`, `item_images`, `loans`, `loan_events`,
-`conversations`, `messages`, `reviews`, `notifications`, `reports` (+ `schema_migrations`).
+`conversations`, `messages`, `reviews`, `notifications`, `reports`, `verification_submissions`,
+`verification_events` (+ `schema_migrations`).
+
+`users.role` (`STUDENT` | `ADMIN`) and `users.verification_status` were added in `0002`. Admins have
+no NIM. See [verification.md](verification.md) for the verification workflow and the admin bootstrap.
 
 Integrity rules enforced by the database itself:
 
@@ -84,6 +90,9 @@ Integrity rules enforced by the database itself:
   loans of the same item from having overlapping dates.
 - `loans_one_open_per_borrower`: a student can have only one open request per item.
 - `reviews` are unique per (loan, reviewer). `reports` are unique per (reporter, item).
+- One `PENDING` verification submission per student; one `APPROVED` submission per student ID
+  number; rejecting or asking for a resubmission requires a reason; decided submissions must record
+  the reviewer and time.
 - Foreign keys everywhere, with check constraints on statuses, conditions, prices and dates.
 
 ## Importing the old SQLite data

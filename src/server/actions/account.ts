@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getSessionToken, requireUser } from "../session";
-import { changePassword, setStudentIdCard, updatePreferences, updateProfile } from "../services/users";
+import { changePassword, updatePreferences, updateProfile } from "../services/users";
 import { getNotification, markAllRead, markRead } from "../services/notifications";
 import { sendMessage } from "../services/chat";
 import { deleteImages, hasFile, saveImage } from "../storage";
@@ -19,13 +19,10 @@ export async function updateProfileAction(_prev: FormState, form: FormData): Pro
     const avatar = form.get("avatar");
     const avatarKey = hasFile(avatar) ? await saveImage(avatar, "avatar", user.id) : null;
     if (avatarKey) saved.push(avatarKey);
-    const card = form.get("studentIdCard");
-    const cardKey = hasFile(card) ? await saveImage(card, "idcard", user.id) : null;
-    if (cardKey) saved.push(cardKey);
+    // Student ID photos are no longer uploaded here: they go through /verification.
 
     const { replacedAvatarKey } = await updateProfile(user.id, input, avatarKey);
-    const replacedCardKey = cardKey ? await setStudentIdCard(user.id, cardKey) : null;
-    await deleteImages([replacedAvatarKey, replacedCardKey]);
+    await deleteImages([replacedAvatarKey]);
   } catch (err) {
     await deleteImages(saved);
     return toFormState(err, form);

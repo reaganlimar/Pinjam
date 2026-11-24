@@ -142,3 +142,37 @@ export const reportSchema = z.object({
 export const messageSchema = z.object({
   body: trimmed(1, 1000, "Message"),
 });
+
+/** Student ID verification form: the details exactly as printed on the card. */
+export const verificationSchema = z.object({
+  fullName: trimmed(2, 120, "Full name"),
+  studentNumber: z
+    .string({ error: "Student ID number is required." })
+    .trim()
+    .min(1, "Student ID number is required.")
+    // Stored without spaces/dashes so "2602-0000-01" and "2602000001" are the same number.
+    .transform((v) => v.toUpperCase().replace(/[\s.-]/g, ""))
+    .pipe(z.string().regex(/^[A-Z0-9]{4,30}$/, "Use the 4–30 letters or digits shown on your card.")),
+  university: trimmed(2, 120, "University"),
+  consent: z.literal("on", { error: "Please confirm this is your own student ID." }),
+});
+
+/** An admin decision. A reason is required to reject or to ask for a resubmission. */
+export const reviewDecisionSchema = z
+  .object({
+    decision: z.enum(["approve", "reject", "request_resubmission"], { error: "Choose a decision." }),
+    reason: optionalText(500, "Reason"),
+    notes: optionalText(1000, "Internal note"),
+  })
+  .superRefine((v, ctx) => {
+    if (v.decision !== "approve" && (!v.reason || v.reason.length < 5)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reason"],
+        message:
+          v.decision === "reject"
+            ? "Explain why the submission is rejected (at least 5 characters). The student sees this."
+            : "Tell the student what to fix (at least 5 characters).",
+      });
+    }
+  });

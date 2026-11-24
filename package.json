@@ -12,9 +12,12 @@
     "db:migrate": "node --env-file-if-exists=.env.local scripts/db-migrate.mjs",
     "db:status": "node --env-file-if-exists=.env.local scripts/db-migrate.mjs --status",
     "db:import-sqlite": "node --env-file-if-exists=.env.local scripts/import-sqlite.mjs",
-    "vercel-build": "node scripts/db-migrate.mjs && next build"
+    "vercel-build": "node scripts/db-migrate.mjs && next build",
+    "admin:bootstrap": "node --env-file-if-exists=.env.local scripts/bootstrap-admin.mjs",
+    "verification:purge": "node --env-file-if-exists=.env.local scripts/purge-id-images.mjs"
   },
   "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
     "@vercel/functions": "^3.11.3",
     "bcryptjs": "^3.0.3",
     "lucide-react": "^1.77.0",
@@ -23,6 +26,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "^0.0.1",
+    "tesseract.js": "7.0.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

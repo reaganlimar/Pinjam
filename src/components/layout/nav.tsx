@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AlignJustify, Bell, Clock, House, LayoutDashboard, MessageSquare, UserRound } from "lucide-react";
+import { AlignJustify, Bell, Clock, House, LayoutDashboard, MessageSquare, ShieldCheck, UserRound } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Avatar } from "@/components/ui/avatar";
 
@@ -60,6 +60,7 @@ const DESKTOP_LINKS = [
   { href: "/loans", label: "My Loans", icon: Clock },
 ];
 
+
 export function TopNav({
   user,
   unreadNotifications,
@@ -67,7 +68,7 @@ export function TopNav({
   requestCount,
   campus,
 }: {
-  user: { name: string; avatarKey: string | null };
+  user: { name: string; avatarKey: string | null; isAdmin?: boolean };
   unreadNotifications: number;
   unreadMessages: number;
   requestCount: number;
@@ -104,6 +105,12 @@ export function TopNav({
           })}
         </nav>
         <div className="flex shrink-0 items-center gap-2">
+          {/* Only rendered for admins. Hiding it is cosmetic: /admin checks the role on the server. */}
+          {user.isAdmin && (
+            <IconLink href="/admin" label="Admin dashboard" count={0} active={isActive(pathname, "/admin")}>
+              <ShieldCheck className="size-5" />
+            </IconLink>
+          )}
           <IconLink href="/chat" label="Chat" count={unreadMessages} active={isActive(pathname, "/chat")}>
             <MessageSquare className="size-5" />
           </IconLink>

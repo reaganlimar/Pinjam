@@ -8,7 +8,12 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const user = await requireUser();
   return (
     <AppChrome
-      user={{ name: user.fullName, avatarKey: user.avatarKey }}
+      user={{
+        name: user.fullName,
+        avatarKey: user.avatarKey,
+        isAdmin: user.isAdmin,
+        verificationStatus: user.verificationStatus,
+      }}
       initialCounts={await getNavCounts(user.id)}
       campus={CAMPUS_LABEL}
     >

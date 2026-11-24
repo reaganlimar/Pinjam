@@ -54,11 +54,11 @@ export default async function BrowsePage({ searchParams }: PageProps<"/browse">)
 
       {one(sp.welcome) && (
         <p className="mt-4 rounded-[12px] bg-primary-soft px-4 py-3 text-sm text-primary">
-          Welcome to Pinjam, {user.fullName.split(" ")[0]}! Find something to borrow, or{" "}
-          <Link href="/items/new" className="font-semibold underline underline-offset-2">
-            list an item
+          Welcome to Pinjam, {user.fullName.split(" ")[0]}! Browse what&apos;s available, then{" "}
+          <Link href="/verification" className="font-semibold underline underline-offset-2">
+            verify your student ID
           </Link>{" "}
-          you can lend.
+          to borrow and lend.
         </p>
       )}
 

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { StatTile } from "@/components/profile/stat-tile";
 import { IconLink } from "@/components/layout/nav";
 import { buttonClasses } from "@/components/ui/button";
+import { VERIFICATION_LABEL, VERIFICATION_TONE } from "@/lib/verification";
 
 export const metadata: Metadata = { title: "Profile" };
 
@@ -50,17 +51,22 @@ export default async function ProfilePage({ searchParams }: PageProps<"/profile"
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[22px] font-semibold text-ink">{user.fullName}</h2>
           <p className="truncate text-[13px] text-muted">
-            NIM {user.nim} · {user.email}
+            {user.nim ? `NIM ${user.nim} · ` : ""}
+            {user.email}
           </p>
           {user.major && <p className="text-[13px] text-muted">{user.major}</p>}
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <Stars rating={stats.rating} count={stats.reviewCount} />
           </div>
           <div className="mt-1.5 flex flex-wrap gap-2">
-            {user.studentVerified ? (
-              <Badge tone="success">Verified</Badge>
+            {user.isAdmin ? (
+              <Badge tone="info">Admin</Badge>
             ) : (
-              <Badge tone="neutral">{user.hasStudentIdCard ? "Verification pending" : "Add student ID to verify"}</Badge>
+              <Link href="/verification" aria-label={`Student verification: ${VERIFICATION_LABEL[user.verificationStatus]}`}>
+                <Badge tone={VERIFICATION_TONE[user.verificationStatus]}>
+                  {user.verificationStatus === "APPROVED" ? "Verified student" : VERIFICATION_LABEL[user.verificationStatus]}
+                </Badge>
+              </Link>
             )}
           </div>
         </div>
@@ -77,9 +83,23 @@ export default async function ProfilePage({ searchParams }: PageProps<"/profile"
 
       <nav className="mt-6 overflow-hidden rounded-[12px] border border-line bg-surface" aria-label="Profile">
         <ul>
+          {user.isAdmin && (
+            <li className="border-b border-line">
+              <MenuLink href="/admin" label="Admin dashboard" />
+            </li>
+          )}
           <li className="border-b border-line">
             <MenuLink href="/profile/edit" label="Edit profile" />
           </li>
+          {!user.isAdmin && (
+            <li className="border-b border-line">
+              <MenuLink
+                href="/verification"
+                label="Student verification"
+                badge={<Badge tone={VERIFICATION_TONE[user.verificationStatus]}>{VERIFICATION_LABEL[user.verificationStatus]}</Badge>}
+              />
+            </li>
+          )}
           {MENU.map((m) => (
             <li key={m.href} className="border-b border-line last:border-b-0">
               <MenuLink href={m.href} label={m.label} />
@@ -100,10 +120,11 @@ export default async function ProfilePage({ searchParams }: PageProps<"/profile"
   );
 }
 
-function MenuLink({ href, label }: { href: string; label: string }) {
+function MenuLink({ href, label, badge }: { href: string; label: string; badge?: React.ReactNode }) {
   return (
-    <Link href={href} className="flex items-center justify-between px-4 py-3.5 text-[15px] text-ink transition-colors hover:bg-sunken">
-      {label}
+    <Link href={href} className="flex items-center justify-between gap-3 px-4 py-3.5 text-[15px] text-ink transition-colors hover:bg-sunken">
+      <span className="flex-1">{label}</span>
+      {badge}
       <ChevronRight className="size-5 text-ink" />
     </Link>
   );

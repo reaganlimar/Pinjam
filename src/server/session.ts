@@ -1,8 +1,15 @@
 import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
-import { createSession, deleteSession, findUserBySession, type CurrentUser } from "./services/users";
+import { notFound, redirect } from "next/navigation";
+import {
+  createSession,
+  deleteSession,
+  findUserBySession,
+  sessionLifetimeMs,
+  type CurrentUser,
+} from "./services/users";
+import type { Role } from "@/lib/verification";
 
 const COOKIE = "pinjam_session";
 
@@ -19,12 +26,29 @@ export async function requireUser(): Promise<CurrentUser> {
   return user;
 }
 
+/**
+ * Use at the top of every admin page, admin server action and admin route.
+ * Signed-out visitors go to sign in; signed-in students get a plain 404, so the
+ * admin area isn't advertised. Services re-check the role against the database.
+ */
+export async function requireAdmin(): Promise<CurrentUser> {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login?next=/admin");
+  if (user.role !== "ADMIN") notFound();
+  return user;
+}
+
+/** Where a user lands after signing in (unless a safe `next` page was requested). */
+export function homeFor(user: { role: Role }) {
+  return user.role === "ADMIN" ? "/admin" : "/browse";
+}
+
 export async function getSessionToken(): Promise<string | null> {
   return (await cookies()).get(COOKIE)?.value ?? null;
 }
 
-export async function startSession(userId: number) {
-  const { token, expiresAt } = await createSession(userId);
+export async function startSession(userId: number, role: Role = "STUDENT") {
+  const { token, expiresAt } = await createSession(userId, sessionLifetimeMs(role));
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",

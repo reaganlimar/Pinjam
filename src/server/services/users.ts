@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { getDb, PG, pgCode, pgConstraint, sql, transaction, type Row } from "../db";
 import { AppError, notFound } from "../errors";
 import { TIME_ZONE } from "@/lib/format";
+import type { Role, VerificationStatus } from "@/lib/verification";
 import {
   changePasswordSchema,
   loginSchema,
@@ -16,13 +17,17 @@ export type CurrentUser = {
   id: number;
   email: string;
   fullName: string;
-  nim: string;
+  /** Student ID number. Admin accounts have none. */
+  nim: string | null;
   major: string | null;
   phone: string | null;
   avatarKey: string | null;
   hasStudentIdCard: boolean;
   studentVerified: boolean;
   emailVerified: boolean;
+  role: Role;
+  isAdmin: boolean;
+  verificationStatus: VerificationStatus;
   theme: "light" | "dark";
   notifyReminders: boolean;
   createdAt: string;
@@ -33,13 +38,16 @@ export function toCurrentUser(r: Row): CurrentUser {
     id: Number(r.id),
     email: String(r.email),
     fullName: String(r.full_name),
-    nim: String(r.nim),
+    nim: r.nim == null ? null : String(r.nim),
     major: (r.major as string) ?? null,
     phone: (r.phone as string) ?? null,
     avatarKey: (r.avatar_key as string) ?? null,
     hasStudentIdCard: Boolean(r.student_id_card_key),
     studentVerified: Boolean(r.student_verified_at),
     emailVerified: Boolean(r.email_verified_at),
+    role: r.role === "ADMIN" ? "ADMIN" : "STUDENT",
+    isAdmin: r.role === "ADMIN",
+    verificationStatus: (r.verification_status as VerificationStatus) ?? "UNVERIFIED",
     theme: r.theme === "dark" ? "dark" : "light",
     notifyReminders: r.notify_reminders === true,
     createdAt: String(r.created_at),
@@ -47,7 +55,7 @@ export function toCurrentUser(r: Row): CurrentUser {
 }
 
 const USER_COLUMNS = sql`id, email, full_name, nim, major, phone, avatar_key, student_id_card_key,
-  student_verified_at, email_verified_at, theme, notify_reminders, created_at`;
+  student_verified_at, email_verified_at, role, verification_status, theme, notify_reminders, created_at`;
 
 // ---------------------------------------------------------------- registration / login
 
@@ -111,13 +119,22 @@ export async function verifyCredentials(input: unknown): Promise<CurrentUser> {
 // ---------------------------------------------------------------- sessions
 
 export const SESSION_DAYS = 30;
+/** Admin sessions are short-lived: an admin signs in again after 12 hours. */
+export const ADMIN_SESSION_HOURS = 12;
+
+export function sessionLifetimeMs(role: Role): number {
+  return role === "ADMIN" ? ADMIN_SESSION_HOURS * 60 * 60 * 1000 : SESSION_DAYS * 24 * 60 * 60 * 1000;
+}
 
 const hashToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
 
 /** Creates a session and returns the raw token to store in the cookie. */
-export async function createSession(userId: number): Promise<{ token: string; expiresAt: Date }> {
+export async function createSession(
+  userId: number,
+  lifetimeMs = sessionLifetimeMs("STUDENT"),
+): Promise<{ token: string; expiresAt: Date }> {
   const token = crypto.randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + lifetimeMs);
   await getDb().run(
     sql`INSERT INTO sessions (id, user_id, expires_at) VALUES (${hashToken(token)}, ${userId}, ${expiresAt.toISOString()})`,
   );
@@ -153,15 +170,6 @@ export async function updateProfile(userId: number, input: unknown, avatarKey?: 
       avatar_key = COALESCE(${avatarKey ?? null}::text, avatar_key), updated_at = now()
     WHERE id = ${userId}`);
   return { replacedAvatarKey: avatarKey ? previous.avatar_key : null };
-}
-
-export async function setStudentIdCard(userId: number, key: string): Promise<string | null> {
-  const db = getDb();
-  const previous = await db.one<{ student_id_card_key: string | null }>(
-    sql`SELECT student_id_card_key FROM users WHERE id = ${userId}`,
-  );
-  await db.run(sql`UPDATE users SET student_id_card_key = ${key}, updated_at = now() WHERE id = ${userId}`);
-  return previous.student_id_card_key;
 }
 
 export async function changePassword(userId: number, input: unknown, keepSessionToken: string | null) {

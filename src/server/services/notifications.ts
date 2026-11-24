@@ -13,7 +13,10 @@ export type NotificationType =
   | "loan_completed"
   | "loan_due_soon"
   | "message"
-  | "review";
+  | "review"
+  | "verification_approved"
+  | "verification_rejected"
+  | "verification_resubmission";
 
 export type Notification = {
   id: number;

@@ -18,6 +18,8 @@ import { OwnerControls } from "./owner-controls";
 import { CONDITION_LABEL, formatDay, todayDateOnly } from "@/lib/format";
 import { STATUS_LABEL, STATUS_TONE } from "@/lib/loan-status";
 import { buttonClasses, LinkButton } from "@/components/ui/button";
+import { VerificationRequired } from "@/components/verification/verification-required";
+import { can } from "@/lib/permissions";
 
 export const metadata: Metadata = { title: "Item" };
 
@@ -141,6 +143,8 @@ export default async function ItemPage({ params, searchParams }: PageProps<"/ite
                     View request
                   </LinkButton>
                 </div>
+              ) : item.isAvailable && !can(user, "request_loan") ? (
+                <VerificationRequired actor={user} capability="request_loan" />
               ) : item.isAvailable ? (
                 <RequestForm
                   itemId={item.id}

@@ -3,7 +3,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { BottomNav, TopNav } from "./nav";
+import { VerificationBanner } from "@/components/verification/verification-banner";
 import type { NavCounts } from "@/server/services/counts";
+import type { VerificationStatus } from "@/lib/verification";
 import { cn } from "@/lib/cn";
 
 const POLL_MS = 20_000;
@@ -18,7 +20,7 @@ export function AppChrome({
   campus,
   children,
 }: {
-  user: { name: string; avatarKey: string | null };
+  user: { name: string; avatarKey: string | null; isAdmin: boolean; verificationStatus: VerificationStatus };
   initialCounts: NavCounts;
   campus: string;
   children: ReactNode;
@@ -63,6 +65,7 @@ export function AppChrome({
         requestCount={counts.requests}
         campus={campus}
       />
+      {!user.isAdmin && <VerificationBanner status={user.verificationStatus} />}
       <main
         className={cn(
           "mx-auto w-full max-w-6xl flex-1 px-4 md:px-8",

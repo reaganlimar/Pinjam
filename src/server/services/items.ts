@@ -5,6 +5,7 @@ import { itemSchema, parse } from "../validation";
 import { notify } from "./notifications";
 import { todayDateOnly, type ItemCondition } from "@/lib/format";
 import { getUserStats } from "./users";
+import { assertCan } from "../permissions";
 
 export const MAX_ITEM_IMAGES = 4;
 
@@ -211,6 +212,8 @@ export async function createItem(ownerId: number, input: unknown, imageKeys: str
   const data = parse(itemSchema, input);
   if (imageKeys.length > MAX_ITEM_IMAGES) throw new AppError(`Add at most ${MAX_ITEM_IMAGES} photos.`);
   return transaction(async (db) => {
+    // Only verified students (and admins) may list items.
+    await assertCan(db, ownerId, "create_listing");
     await assertCategory(db, data.categoryId);
     const { id } = await db.one<{ id: number }>(sql`
       INSERT INTO items (owner_id, category_id, name, description, condition, price_per_day, max_days, pickup_point)

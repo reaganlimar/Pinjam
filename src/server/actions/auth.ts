@@ -1,26 +1,29 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { endSession, startSession } from "../session";
+import { endSession, homeFor, startSession } from "../session";
 import { registerUser, verifyCredentials } from "../services/users";
-import { hasFile, saveImage } from "../storage";
-import { parse, registerSchema } from "../validation";
+import { registerSchema, parse } from "../validation";
+import type { Role } from "@/lib/verification";
 import { toFormState, type FormState } from "./result";
 
-/** Only allow redirects back to our own pages. */
-function safeNext(value: FormDataEntryValue | null) {
+/** Only allow redirects back to our own pages; otherwise go to the user's home screen. */
+function safeNext(value: FormDataEntryValue | null, role: Role) {
   const next = typeof value === "string" ? value : "";
-  return next.startsWith("/") && !next.startsWith("//") ? next : "/browse";
+  return next.startsWith("/") && !next.startsWith("//") ? next : homeFor({ role });
 }
 
 export async function loginAction(_prev: FormState, form: FormData): Promise<FormState> {
+  let role: Role;
   try {
     const user = await verifyCredentials({ email: form.get("email"), password: form.get("password") });
-    await startSession(user.id);
+    role = user.role;
+    // Admin sessions are shorter-lived than student sessions (see sessionLifetimeMs).
+    await startSession(user.id, user.role);
   } catch (err) {
     return toFormState(err, form);
   }
-  redirect(safeNext(form.get("next")));
+  redirect(safeNext(form.get("next"), role));
 }
 
 export async function registerAction(_prev: FormState, form: FormData): Promise<FormState> {
@@ -32,12 +35,11 @@ export async function registerAction(_prev: FormState, form: FormData): Promise<
     agree: form.get("agree") ?? undefined,
   };
   try {
-    parse(registerSchema, input); // validate fields before reading the photo
-    const card = form.get("studentIdCard");
-    // The ID card is stored in the same transaction as the new user, so a failed
-    // sign-up never leaves an orphaned file behind.
-    const user = await registerUser(input, hasFile(card) ? (userId, db) => saveImage(card, "idcard", userId, db) : undefined);
-    await startSession(user.id);
+    parse(registerSchema, input);
+    // New accounts are always students (the role column defaults to STUDENT). Student ID
+    // verification is a separate step on /verification, reviewed by an admin.
+    const user = await registerUser(input);
+    await startSession(user.id, user.role);
   } catch (err) {
     return toFormState(err, form);
   }

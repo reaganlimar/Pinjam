@@ -5,7 +5,6 @@ import { useActionState } from "react";
 import { registerAction } from "@/server/actions/auth";
 import { Field, FormMessage, Input } from "@/components/ui/field";
 import { SubmitButton } from "@/components/ui/submit-button";
-import { PhotoInput } from "@/components/ui/photo-input";
 import { Checkbox } from "@/components/ui/checkbox";
 
 export function RegisterForm() {
@@ -14,12 +13,6 @@ export function RegisterForm() {
   const v = state.values ?? {};
   return (
     <form action={action} className="mt-5 space-y-5" noValidate>
-      <div>
-        <PhotoInput name="studentIdCard" label="Add student ID photo" error={err.studentIdCard} />
-        <p className="mt-2 text-[12px] text-muted">
-          Optional for now. Your card is only visible to you and is kept for identity checks.
-        </p>
-      </div>
       <Field label="Full name" name="fullName" error={err.fullName}>
         <Input name="fullName" autoComplete="name" placeholder="Your full name" defaultValue={v.fullName} error={err.fullName} />
       </Field>

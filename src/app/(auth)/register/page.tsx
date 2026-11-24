@@ -13,8 +13,8 @@ export default function RegisterPage() {
       <Logo className="text-[30px]" />
       <h1 className="mt-1 text-[26px] font-semibold leading-tight text-ink">Create Account</h1>
       <p className="mt-1 text-[14px] leading-snug text-muted">
-        Use your {short} student details to start borrowing and upload your {short} student ID card to verify your
-        identity.
+        Use your {short} student details to create an account. After signing up, verify your {short} student ID to
+        borrow and lend.
       </p>
       <RegisterForm />
       <div className="mt-6 text-center text-[13px] text-muted">
