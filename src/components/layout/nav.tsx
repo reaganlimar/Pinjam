@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { AlignJustify, Bell, Clock, House, LayoutDashboard, MessageSquare, ShieldCheck, UserRound } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Avatar } from "@/components/ui/avatar";
+import { PinjamLogo } from "@/components/ui/pinjam-logo";
 
 const isActive = (pathname: string, href: string) => pathname === href || pathname.startsWith(href + "/");
 
@@ -77,10 +78,10 @@ export function TopNav({
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-30 hidden border-b border-line-soft bg-surface/95 backdrop-blur md:block">
-      <div className="mx-auto flex h-[72px] max-w-6xl items-center gap-4 px-6 lg:gap-8 lg:px-8">
-        <Link href="/browse" className="flex shrink-0 flex-col">
-          <span className="font-display text-[34px] leading-none text-primary">PINJAM</span>
-          <span className="hidden whitespace-nowrap text-[11px] text-muted lg:block">{campus}</span>
+      {/* Tighter spacing on tablets (md) so the logo, four links and the icons fit in 768px. */}
+      <div className="mx-auto flex h-[72px] max-w-6xl items-center gap-3 px-4 lg:gap-8 lg:px-8">
+        <Link href="/browse" className="shrink-0">
+          <PinjamLogo size="nav" subtitle={campus} />
         </Link>
         <nav aria-label="Main" className="flex flex-1 items-center gap-1">
           {DESKTOP_LINKS.map(({ href, label, icon: Icon }) => {
@@ -91,7 +92,7 @@ export function TopNav({
                 href={href}
                 aria-current={on ? "page" : undefined}
                 className={cn(
-                  "relative inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-[10px] px-3 text-sm font-medium transition-colors",
+                  "relative inline-flex h-10 items-center gap-1.5 whitespace-nowrap rounded-[10px] px-2 text-sm font-medium transition-colors lg:gap-2 lg:px-3",
                   on ? "bg-primary-soft text-primary" : "text-muted hover:bg-sunken hover:text-ink",
                 )}
               >

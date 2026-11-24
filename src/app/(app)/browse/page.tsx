@@ -5,7 +5,8 @@ import { requireUser } from "@/server/session";
 import { browseItems, listCategories, SORT_OPTIONS, type BrowseFilters } from "@/server/services/items";
 import { unreadCount } from "@/server/services/notifications";
 import { ItemGrid } from "@/components/items/item-card";
-import { EmptyState, Logo } from "@/components/ui/misc";
+import { EmptyState } from "@/components/ui/misc";
+import { PinjamLogo } from "@/components/ui/pinjam-logo";
 import { IconLink } from "@/components/layout/nav";
 import { LinkButton } from "@/components/ui/button";
 import { SortSelect } from "./sort-select";
@@ -42,10 +43,7 @@ export default async function BrowsePage({ searchParams }: PageProps<"/browse">)
     <div className="pt-6 md:pt-8">
       {/* Mobile header (Figma Homepage/Browse Menu); desktop uses the top bar. */}
       <div className="flex items-start justify-between md:hidden">
-        <div>
-          <Logo className="text-[38px]" />
-          <p className="text-[13px] text-muted">{CAMPUS_LABEL}</p>
-        </div>
+        <PinjamLogo subtitle={CAMPUS_LABEL} />
         <IconLink href="/notifications" label="Notifications" count={await unreadCount(user.id)}>
           <Bell className="size-5" />
         </IconLink>
